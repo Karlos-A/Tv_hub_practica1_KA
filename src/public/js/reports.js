@@ -33,13 +33,19 @@ function createReportItem(report) {
   created.className = 'report-date';
   created.textContent = new Date(report.createdAt).toLocaleString();
   item.append(channel, reason, description, status, created);
-  if (report.evidenceUrl) {
-    const evidence = document.createElement('a');
-    evidence.href = report.evidenceUrl;
-    evidence.target = '_blank';
-    evidence.rel = 'noopener';
-    evidence.textContent = 'View evidence image';
-    item.append(evidence);
+  //Modificación para mostrar los enlaces de evidencia si existen
+  if (report.evidenceUrls && report.evidenceUrls.length > 0) {
+    const evidencesContainer = document.createElement('div');
+    report.evidenceUrls.forEach((url, index) => {
+      const evidence = document.createElement('a');
+      evidence.href = url;
+      evidence.target = '_blank';
+      evidence.rel = 'noopener';
+      evidence.textContent = `View evidence ${index + 1}`;
+      evidence.style.display = 'block'; // Para que salgan en líneas separadas
+      evidencesContainer.append(evidence);
+    });
+    item.append(evidencesContainer);
   }
   return item;
 }
@@ -62,14 +68,13 @@ async function submitReport(event) {
   formData.append('channelId', channelId);
   formData.append('reason', document.querySelector('#report-reason').value);
   formData.append('description', document.querySelector('#report-description').value);
-  const evidence =
-    document.querySelector('#report-evidence').files[0];
+  const evidenceFiles = document.querySelector('#report-evidence').files;
   // TODO v4.5 4:
   // Completa el nombre del campo utilizado para enviar la imagen.
   // Objetivo: relacionar el archivo del formulario con upload.single().
   // Resultado esperado: Multer reconocerá la evidencia enviada por el navegador.
-  if (evidence) {
-    formData.append('________', evidence);
+  for (const file of evidenceFiles) {
+    formData.append('evidence', file);
   }
 
   reportFormStatus.textContent = 'Submitting report…';
@@ -79,7 +84,7 @@ async function submitReport(event) {
   // Resultado esperado: POST /api/reports recibirá correctamente multipart/form-data.
   const response = await fetch('/api/reports', {
     method: 'POST',
-    body: ________
+    body: formData,
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));

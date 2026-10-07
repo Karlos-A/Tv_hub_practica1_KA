@@ -1,0 +1,2906 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+docs/
+  argentina_playlist.m3u
+  canada_playlist.m3u
+  japon_playlist.m3u
+  mexico_playlist.m3u
+  usa_playlist.m3u
+src/
+  config/
+    database.ts
+    env.ts
+  controllers/
+    auth.controller.ts
+    channel.controller.ts
+    favorite.controller.ts
+    report.controller.ts
+    user.controller.ts
+  middleware/
+    authenticate.middleware.ts
+    authorize.middleware.ts
+    error.middleware.ts
+    upload.ts
+  models/
+    channel.model.ts
+    favorite.model.ts
+    report.model.ts
+    session.model.ts
+    user.model.ts
+  public/
+    css/
+      styles.css
+    images/
+      channel-placeholder.svg
+    js/
+      auth.js
+      country.js
+      favorites.js
+      home.js
+      reports.js
+      watch.js
+    country.html
+    favorites.html
+    index.html
+    login.html
+    register.html
+    reports.html
+    watch.html
+  routes/
+    auth.routes.ts
+    channel.routes.ts
+    favorite.routes.ts
+    health.routes.ts
+    report.routes.ts
+    user.routes.ts
+  scripts/
+    import-all-m3u.ts
+    import-m3u.ts
+  types/
+    express.d.ts
+  utils/
+    app-error.ts
+    cookies.ts
+    jwt.ts
+    m3u-parser.ts
+    password.ts
+    token-hash.ts
+  app.ts
+  server.ts
+tests/
+  auth.test.ts
+  channels.test.ts
+  favorites.test.ts
+  health.test.ts
+  m3u-parser.test.ts
+  reports.test.ts
+  setup.ts
+uploads/
+  reports/
+    .gitkeep
+.env.example
+.gitignore
+docker-compose.yml
+jest.config.cjs
+package.json
+README.md
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/config/database.ts">
+import mongoose from 'mongoose';
+import { env } from './env.js';
+
+export async function connectDatabase(): Promise<void> {
+  await mongoose.connect(env.mongoUri);
+}
+
+export async function disconnectDatabase(): Promise<void> {
+  await mongoose.disconnect();
+}
+
+export function isDatabaseConnected(): boolean {
+  return mongoose.connection.readyState === mongoose.ConnectionStates.connected;
+}
+</file>
+
+<file path="src/config/env.ts">
+import dotenv from 'dotenv';
+
+// A clone of the project does not contain .env because it must never be
+// committed. For local classes, use the versioned example as a safe fallback
+// so that `npm run dev` works immediately. A real .env (or platform variables)
+// always takes precedence, and production never uses the example file.
+const localEnvironment = dotenv.config({ path: '.env' });
+
+if (localEnvironment.error && process.env.NODE_ENV !== 'production') {
+  dotenv.config({ path: '.env.example' });
+}
+
+function required(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
+}
+
+export const env = {
+  port: Number(process.env.PORT ?? 3000),
+  nodeEnv: process.env.NODE_ENV ?? 'development',
+  mongoUri: required('MONGO_URI'),
+  accessSecret: required('JWT_ACCESS_SECRET'),
+  refreshSecret: required('JWT_REFRESH_SECRET'),
+  accessTokenTtl: process.env.ACCESS_TOKEN_TTL ?? '15m',
+  refreshTokenTtl: process.env.REFRESH_TOKEN_TTL ?? '7d'
+};
+</file>
+
+<file path="src/controllers/report.controller.ts">
+import { unlink } from 'node:fs/promises';
+import type { RequestHandler } from 'express';
+import { isValidObjectId } from 'mongoose';
+import { Channel } from '../models/channel.model.js';
+import { Report, reportReasons } from '../models/report.model.js';
+import { AppError } from '../utils/app-error.js';
+
+function getUserId(request: Parameters<RequestHandler>[0]): string {
+  if (!request.auth) throw new AppError(401, 'UNAUTHORIZED', 'Authentication is required');
+  return request.auth.userId;
+}
+
+function readRequiredText(value: unknown, code: string, message: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new AppError(400, code, message);
+  return value.trim();
+}
+
+async function removeUploadedEvidence(file: Express.Multer.File | undefined): Promise<void> {
+  if (file) await unlink(file.path).catch(() => undefined);
+}
+
+export const createReport: RequestHandler = async (request, response) => {
+  const file = request.file;
+
+  try {
+    const userId = getUserId(request);
+    const channelId = readRequiredText(request.body.channelId, 'INVALID_CHANNEL_ID', 'Channel id is invalid');
+    if (!isValidObjectId(channelId)) throw new AppError(400, 'INVALID_CHANNEL_ID', 'Channel id is invalid');
+
+    const reason = readRequiredText(request.body.reason, 'INVALID_REPORT_REASON', 'Report reason is invalid');
+    if (!reportReasons.includes(reason as (typeof reportReasons)[number])) {
+      throw new AppError(400, 'INVALID_REPORT_REASON', 'Report reason is invalid');
+    }
+
+    const description = readRequiredText(request.body.description, 'INVALID_REPORT_DESCRIPTION', 'Description is required');
+    if (description.length > 1000) {
+      throw new AppError(400, 'INVALID_REPORT_DESCRIPTION', 'Description must be 1000 characters or fewer');
+    }
+
+    const channel = await Channel.findOne({ _id: channelId, isActive: true });
+    if (!channel) throw new AppError(404, 'CHANNEL_NOT_FOUND', 'Channel was not found');
+
+    // TODO v4.5 2:
+    // Completa la propiedad de Multer que contiene el nombre final del archivo.
+    // Objetivo: construir la URL que se almacenará dentro del Report.
+    // Resultado esperado: evidenceUrl tendrá una ruta como /uploads/reports/archivo.png.
+    const evidenceUrl = file
+      ? `/uploads/reports/${file.filename}`
+      : undefined;
+
+    // TODO v4.5 3:
+    // Completa el método del Model utilizado para crear un nuevo Report.
+    // Objetivo: persistir los datos del reporte y la referencia de la evidencia.
+    // Resultado esperado: MongoDB contendrá un nuevo Report con status OPEN.
+    const report = await Report.create({
+      userId,
+      channelId,
+      reason,
+      description,
+      evidenceUrl
+    });
+
+    response.status(201).json({ report });
+  } catch (error) {
+    await removeUploadedEvidence(file);
+    throw error;
+  }
+};
+
+export const listReports: RequestHandler = async (request, response) => {
+  // TODO v4.5 6:
+  // Completa el método de Mongoose utilizado para consultar los Reports del usuario.
+  // Objetivo: recuperar los reportes existentes del usuario autenticado.
+  // Resultado esperado: GET /api/reports devolverá los Reports ordenados por fecha.
+  const reports = await Report.________({ userId: getUserId(request) })
+    .populate('channelId', 'name')
+    .sort('-createdAt');
+
+  response.json({ reports });
+};
+</file>
+
+<file path="src/controllers/user.controller.ts">
+import type { RequestHandler } from 'express';
+import { User } from '../models/user.model.js';
+import { AppError } from '../utils/app-error.js';
+
+export const me: RequestHandler = async (request, response) => {
+  const auth = request.auth;
+  if (!auth) throw new AppError(401, 'UNAUTHORIZED', 'Authentication is required');
+
+  const user = await User.findById(auth.userId).select('email role');
+  if (!user) throw new AppError(401, 'UNAUTHORIZED', 'User no longer exists');
+
+  response.json({ id: user.id, email: user.email, role: user.role });
+};
+
+export const adminDemo: RequestHandler = (_request, response) => {
+  response.json({ message: 'Admin access granted' });
+};
+</file>
+
+<file path="src/middleware/upload.ts">
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import multer from 'multer';
+import { AppError } from '../utils/app-error.js';
+
+export const reportUploadsDirectory = path.join(process.cwd(), 'uploads', 'reports');
+
+mkdirSync(reportUploadsDirectory, { recursive: true });
+
+const extensionsByMimeType: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp'
+};
+
+const storage = multer.diskStorage({
+  destination: (_request, _file, callback) => callback(null, reportUploadsDirectory),
+  filename: (_request, file, callback) => callback(null, `${randomUUID()}${extensionsByMimeType[file.mimetype]}`)
+});
+
+export const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_request, file, callback) => {
+    if (extensionsByMimeType[file.mimetype]) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new AppError(400, 'INVALID_EVIDENCE_FILE', 'Evidence must be an image file'));
+  }
+});
+</file>
+
+<file path="src/models/favorite.model.ts">
+import { model, Schema } from 'mongoose';
+
+const favoriteSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    channelId: { type: Schema.Types.ObjectId, ref: 'Channel', required: true }
+  },
+  { timestamps: true }
+);
+
+// A channel can only appear once in each user's library.
+favoriteSchema.index({ userId: 1, channelId: 1 }, { unique: true });
+
+export const Favorite = model('Favorite', favoriteSchema);
+</file>
+
+<file path="src/models/report.model.ts">
+import { model, Schema } from 'mongoose';
+
+export const reportReasons = [
+  'STREAM_DOES_NOT_LOAD',
+  'WRONG_CHANNEL',
+  'AUDIO_PROBLEM',
+  'VIDEO_PROBLEM',
+  'OTHER'
+] as const;
+
+const reportSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    channelId: { type: Schema.Types.ObjectId, ref: 'Channel', required: true },
+    reason: { type: String, enum: reportReasons, required: true },
+    description: { type: String, required: true, trim: true, maxlength: 1000 },
+    evidenceUrl: { type: String, trim: true },
+    status: { type: String, enum: ['OPEN'], required: true, default: 'OPEN' }
+  },
+  { timestamps: true }
+);
+
+export const Report = model('Report', reportSchema);
+</file>
+
+<file path="src/models/session.model.ts">
+import { model, Schema } from 'mongoose';
+
+const sessionSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    refreshTokenHash: { type: String, required: true },
+    // MongoDB automatically removes a session after this date.
+    expiresAt: { type: Date, required: true, index: { expires: 0 } },
+    revokedAt: { type: Date },
+    userAgent: { type: String }
+  },
+  { timestamps: true }
+);
+
+export const Session = model('Session', sessionSchema);
+</file>
+
+<file path="src/models/user.model.ts">
+import { model, Schema } from 'mongoose';
+
+export const roles = ['USER', 'ADMIN'] as const;
+export type Role = (typeof roles)[number];
+
+const userSchema = new Schema(
+  {
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    passwordHash: { type: String, required: true },
+    role: { type: String, enum: roles, required: true, default: 'USER' }
+  },
+  { timestamps: true }
+);
+
+export const User = model('User', userSchema);
+</file>
+
+<file path="src/public/images/channel-placeholder.svg">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" role="img" aria-label="TV Hub channel logo placeholder">
+  <rect width="320" height="180" fill="#12366b"/>
+  <rect x="92" y="48" width="136" height="84" rx="10" fill="#38bdf8"/>
+  <path d="M140 72l48 18-48 18z" fill="#06142e"/>
+  <text x="160" y="158" text-anchor="middle" fill="#e8f1ff" font-family="Arial, sans-serif" font-size="18" font-weight="700">TV HUB</text>
+</svg>
+</file>
+
+<file path="src/public/js/auth.js">
+const form = document.querySelector('#auth-form');
+const error = document.querySelector('#error');
+const endpoint = location.pathname === '/register' ? '/api/auth/register' : '/api/auth/login';
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  error.textContent = '';
+  const values = new FormData(form);
+  const response = await fetch(endpoint, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: values.get('email'), password: values.get('password') })
+  });
+  if (response.ok) { location.href = '/'; return; }
+  const body = await response.json();
+  error.textContent = body.error?.message ?? 'Could not sign in';
+});
+</file>
+
+<file path="src/public/js/country.js">
+const countryList = document.querySelector('#country-list');
+const countryName = document.querySelector('#country-name');
+const countryStatus = document.querySelector('#country-status');
+const searchInput = document.querySelector('#channel-search');
+const sortSelect = document.querySelector('#channel-sort');
+const country = new URLSearchParams(location.search).get('country') || '';
+let channels = [];
+
+async function loadUser() {
+  const response = await fetch('/api/users/me');
+  if (!response.ok) { location.href = '/login'; return false; }
+  const user = await response.json(); document.querySelector('#welcome').textContent = `Welcome, ${user.email}`; return true;
+}
+function openChannel(channelId) { location.href = `/watch.html?${new URLSearchParams({ channelId })}`; }
+function createChannelCard(channel) {
+  const card = document.createElement('article'); card.className = 'channel-card'; card.tabIndex = 0; card.setAttribute('role', 'link');
+  card.addEventListener('click', () => openChannel(channel._id)); card.addEventListener('keydown', (event) => { if (event.key === 'Enter') openChannel(channel._id); });
+  const logo = document.createElement('img'); logo.src = channel.logoUrl || '/images/channel-placeholder.svg'; logo.alt = `${channel.name} logo`; logo.className = 'channel-logo'; logo.addEventListener('error', () => { logo.src = '/images/channel-placeholder.svg'; });
+  const name = document.createElement('h3'); name.textContent = channel.name;
+  const channelCountry = document.createElement('p'); channelCountry.className = 'channel-country'; channelCountry.textContent = channel.country;
+  const categories = document.createElement('p'); categories.className = 'channel-categories'; categories.textContent = channel.categories.join(', ') || 'Live TV';
+  card.append(logo, name, channelCountry, categories); return card;
+}
+function renderChannels() {
+  const search = searchInput.value.trim().toLowerCase();
+  const visibleChannels = channels.filter((channel) => channel.name.toLowerCase().includes(search));
+  visibleChannels.sort((first, second) => sortSelect.value === 'newest' ? new Date(second.createdAt) - new Date(first.createdAt) : first.name.localeCompare(second.name));
+  if (visibleChannels.length === 0) { countryList.replaceChildren(Object.assign(document.createElement('p'), { className: 'empty-state', textContent: channels.length ? 'No channels found.' : 'No channels are available for this country.' })); return; }
+  countryList.replaceChildren(...visibleChannels.map(createChannelCard));
+}
+async function loadChannels() {
+  if (!country) { countryStatus.textContent = 'Choose a country from Home.'; return; }
+  countryName.textContent = country;
+  const response = await fetch(`/api/channels?${new URLSearchParams({ country })}`);
+  if (!response.ok) { countryStatus.textContent = 'Could not load channels.'; return; }
+  ({ channels } = await response.json());
+  countryStatus.textContent = `${channels.length} channel${channels.length === 1 ? '' : 's'} available`;
+  renderChannels();
+}
+searchInput.addEventListener('input', renderChannels); sortSelect.addEventListener('change', renderChannels);
+document.querySelector('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; });
+async function start() { if (await loadUser()) await loadChannels(); } start();
+</file>
+
+<file path="src/public/js/reports.js">
+const reportsList = document.querySelector('#reports-list');
+const reportsStatus = document.querySelector('#reports-status');
+const reportFormSection = document.querySelector('#report-form-section');
+const reportForm = document.querySelector('#report-form');
+const reportFormStatus = document.querySelector('#report-form-status');
+const channelId = new URLSearchParams(location.search).get('channelId');
+
+async function loadUser() {
+  const response = await fetch('/api/users/me');
+  if (!response.ok) { location.href = '/login'; return false; }
+  const user = await response.json();
+  document.querySelector('#welcome').textContent = `Welcome, ${user.email}`;
+  return true;
+}
+
+function formatReason(reason) {
+  return reason.toLowerCase().split('_').map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(' ');
+}
+
+function createReportItem(report) {
+  const item = document.createElement('article');
+  item.className = 'report-item';
+  const channel = document.createElement('h3');
+  channel.textContent = report.channelId?.name || 'Channel unavailable';
+  const reason = document.createElement('p');
+  reason.textContent = `Reason: ${formatReason(report.reason)}`;
+  const description = document.createElement('p');
+  description.textContent = report.description;
+  const status = document.createElement('p');
+  status.className = 'report-status';
+  status.textContent = report.status;
+  const created = document.createElement('p');
+  created.className = 'report-date';
+  created.textContent = new Date(report.createdAt).toLocaleString();
+  item.append(channel, reason, description, status, created);
+  if (report.evidenceUrl) {
+    const evidence = document.createElement('a');
+    evidence.href = report.evidenceUrl;
+    evidence.target = '_blank';
+    evidence.rel = 'noopener';
+    evidence.textContent = 'View evidence image';
+    item.append(evidence);
+  }
+  return item;
+}
+
+async function loadReports() {
+  const response = await fetch('/api/reports');
+  if (!response.ok) { reportsStatus.textContent = 'Could not load reports.'; return; }
+  const { reports } = await response.json();
+  reportsStatus.textContent = `${reports.length} report${reports.length === 1 ? '' : 's'}`;
+  if (reports.length === 0) {
+    reportsList.replaceChildren(Object.assign(document.createElement('p'), { className: 'empty-state', textContent: 'You have not reported a channel yet.' }));
+    return;
+  }
+  reportsList.replaceChildren(...reports.map(createReportItem));
+}
+
+async function submitReport(event) {
+  event.preventDefault();
+  const formData = new FormData();
+  formData.append('channelId', channelId);
+  formData.append('reason', document.querySelector('#report-reason').value);
+  formData.append('description', document.querySelector('#report-description').value);
+  const evidence =
+    document.querySelector('#report-evidence').files[0];
+  // TODO v4.5 4:
+  // Completa el nombre del campo utilizado para enviar la imagen.
+  // Objetivo: relacionar el archivo del formulario con upload.single().
+  // Resultado esperado: Multer reconocerá la evidencia enviada por el navegador.
+  if (evidence) {
+    formData.append('________', evidence);
+  }
+
+  reportFormStatus.textContent = 'Submitting report…';
+  // TODO v4.5 5:
+  // Completa el body de la petición utilizando el FormData construido.
+  // Objetivo: enviar los campos de texto y la evidencia en una misma solicitud.
+  // Resultado esperado: POST /api/reports recibirá correctamente multipart/form-data.
+  const response = await fetch('/api/reports', {
+    method: 'POST',
+    body: ________
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    reportFormStatus.textContent = payload.error?.message || 'Could not submit the report.';
+    return;
+  }
+
+  reportForm.reset();
+  reportFormStatus.textContent = 'Report saved.';
+  await loadReports();
+}
+
+function configureReportForm() {
+  if (!channelId) return;
+  reportFormSection.hidden = false;
+  document.querySelector('#report-channel-id').value = channelId;
+  document.querySelector('#report-channel').textContent = 'Report the selected channel.';
+  reportForm.addEventListener('submit', submitReport);
+}
+
+document.querySelector('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; });
+async function start() { if (await loadUser()) { configureReportForm(); await loadReports(); } }
+start();
+</file>
+
+<file path="src/public/reports.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Hub Reports</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body class="app-body">
+    <main class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/">TV<span>HUB</span></a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link" href="/">⌂ <span>Home</span></a>
+          <a class="nav-link" href="/favorites.html">☆ <span>Favorites</span></a>
+          <a class="nav-link active" href="/reports.html">⚐ <span>Reports</span></a>
+        </nav>
+        <div class="sidebar-note"><p class="eyebrow">CHANNEL HELP</p><p>Tell us when a live channel has a problem.</p></div>
+      </aside>
+      <section class="content">
+        <header class="topbar"><div></div><div class="account"><p id="welcome">Loading your session…</p><button id="logout" class="logout-button">Log out</button></div></header>
+        <section class="page-hero"><p class="eyebrow">CHANNEL REPORTS</p><h1>Reports</h1><p>Share a problem with a channel and attach an image if it helps explain it.</p></section>
+        <section id="report-form-section" class="report-panel" hidden>
+          <h2>Report a problem</h2>
+          <p id="report-channel">Selected channel</p>
+          <form id="report-form">
+            <input id="report-channel-id" name="channelId" type="hidden" />
+            <label for="report-reason">Reason
+              <select id="report-reason" name="reason" required>
+                <option value="">Choose a reason</option>
+                <option value="STREAM_DOES_NOT_LOAD">Stream does not load</option>
+                <option value="WRONG_CHANNEL">Wrong channel</option>
+                <option value="AUDIO_PROBLEM">Audio problem</option>
+                <option value="VIDEO_PROBLEM">Video problem</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </label>
+            <label for="report-description">Description
+              <textarea id="report-description" name="description" maxlength="1000" required></textarea>
+            </label>
+            <label for="report-evidence">Evidence image (optional)
+              <input id="report-evidence" name="evidence" type="file" accept="image/jpeg,image/png,image/gif,image/webp" />
+            </label>
+            <button type="submit">Submit report</button>
+            <p id="report-form-status" class="form-status" aria-live="polite"></p>
+          </form>
+        </section>
+        <section class="browse-section">
+          <div class="section-heading"><h2>My reports</h2><p id="reports-status">Loading reports…</p></div>
+          <div id="reports-list" class="reports-list"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/js/reports.js"></script>
+  </body>
+</html>
+</file>
+
+<file path="src/routes/auth.routes.ts">
+import { Router } from 'express';
+import { login, logout, logoutAll, refresh, register } from '../controllers/auth.controller.js';
+import { authenticate } from '../middleware/authenticate.middleware.js';
+
+export const authRouter = Router();
+
+authRouter.post('/register', register);
+authRouter.post('/login', login);
+authRouter.post('/refresh', refresh);
+authRouter.post('/logout', logout);
+authRouter.post('/logout-all', authenticate, logoutAll);
+</file>
+
+<file path="src/routes/health.routes.ts">
+import { Router } from 'express';
+import { isDatabaseConnected } from '../config/database.js';
+
+export const healthRouter = Router();
+
+healthRouter.get('/health', (_request, response) => {
+  response.json({ status: 'ok' });
+});
+
+healthRouter.get('/ready', (_request, response) => {
+  if (isDatabaseConnected()) {
+    response.json({ status: 'ready', database: 'connected' });
+    return;
+  }
+  response.status(503).json({ status: 'not_ready', database: 'disconnected' });
+});
+</file>
+
+<file path="src/routes/report.routes.ts">
+import { Router } from 'express';
+import { createReport, listReports } from '../controllers/report.controller.js';
+import { authenticate } from '../middleware/authenticate.middleware.js';
+import { upload } from '../middleware/upload.js';
+
+export const reportRouter = Router();
+
+reportRouter.get('/', authenticate, listReports);
+// TODO v4.5 1:
+// Completa el método de Multer utilizado para recibir una sola evidencia.
+// Objetivo: procesar la imagen antes de ejecutar createReport.
+// Resultado esperado: el Controller podrá acceder al archivo mediante request.file.
+reportRouter.post(
+  '/',
+  authenticate,
+  upload.array('evidence'),
+  createReport
+);
+</file>
+
+<file path="src/routes/user.routes.ts">
+import { Router } from 'express';
+import { adminDemo, me } from '../controllers/user.controller.js';
+import { authenticate } from '../middleware/authenticate.middleware.js';
+import { authorize } from '../middleware/authorize.middleware.js';
+
+export const userRouter = Router();
+export const adminRouter = Router();
+
+userRouter.get('/me', authenticate, me);
+adminRouter.get('/demo', authenticate, authorize('ADMIN'), adminDemo);
+</file>
+
+<file path="src/scripts/import-all-m3u.ts">
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
+import { connectDatabase, disconnectDatabase } from '../config/database.js';
+import { Channel } from '../models/channel.model.js';
+import { Favorite } from '../models/favorite.model.js';
+import { parseM3u } from '../utils/m3u-parser.js';
+
+const countriesByPlaylist: Record<string, string> = {
+  argentina: 'Argentina',
+  canada: 'Canada',
+  japon: 'Japan',
+  mexico: 'Mexico',
+  usa: 'United States'
+};
+
+async function importAllPlaylists(): Promise<void> {
+  const playlistDirectory = path.join(process.cwd(), 'docs');
+  const playlistFiles = (await readdir(playlistDirectory))
+    .filter((file) => file.endsWith('_playlist.m3u'))
+    .sort();
+
+  if (playlistFiles.length === 0) throw new Error('No M3U playlists were found in docs');
+
+  await connectDatabase();
+  await Favorite.deleteMany({});
+  await Channel.deleteMany({});
+
+  let imported = 0;
+  for (const file of playlistFiles) {
+    const key = file.replace('_playlist.m3u', '');
+    const country = countriesByPlaylist[key];
+    if (!country) throw new Error('Country is missing for ' + file);
+
+    const playlist = await readFile(path.join(playlistDirectory, file), 'utf8');
+    const channels = parseM3u(playlist, country);
+    await Channel.insertMany(channels);
+    imported += channels.length;
+    console.log(file + ': ' + channels.length + ' channels imported for ' + country + '.');
+  }
+
+  console.log(imported + ' channels imported from ' + playlistFiles.length + ' playlists. Favorites were cleared.');
+  await disconnectDatabase();
+}
+
+importAllPlaylists().catch(async (error: unknown) => {
+  console.error('Could not import M3U playlists:', error);
+  await disconnectDatabase();
+  process.exit(1);
+});
+</file>
+
+<file path="src/types/express.d.ts">
+import type { Role } from '../models/user.model.js';
+
+declare global {
+  namespace Express {
+    interface Request {
+      auth?: { userId: string; role: Role };
+    }
+  }
+}
+
+export {};
+</file>
+
+<file path="src/utils/app-error.ts">
+export class AppError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
+</file>
+
+<file path="src/utils/cookies.ts">
+import type { Response } from 'express';
+import { env } from '../config/env.js';
+
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: 'lax' as const,
+  secure: env.nodeEnv === 'production',
+  path: '/'
+};
+
+export function setAuthCookies(response: Response, accessToken: string, refreshToken: string): void {
+  response.cookie('accessToken', accessToken, cookieOptions);
+  response.cookie('refreshToken', refreshToken, cookieOptions);
+}
+
+export function clearAuthCookies(response: Response): void {
+  response.clearCookie('accessToken', cookieOptions);
+  response.clearCookie('refreshToken', cookieOptions);
+}
+</file>
+
+<file path="src/utils/jwt.ts">
+import jwt, { JwtPayload } from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
+import { env } from '../config/env.js';
+import type { Role } from '../models/user.model.js';
+
+type AccessPayload = { sub: string; role: Role };
+type RefreshPayload = { sub: string; sid: string };
+
+function durationInMilliseconds(value: string): number {
+  const match = /^(\d+)([smhd])$/.exec(value);
+  if (!match) throw new Error('Token TTL must use s, m, h, or d (for example 15m)');
+  const units: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return Number(match[1]) * units[match[2]];
+}
+
+export function createAccessToken(userId: string, role: Role): string {
+  return jwt.sign({ sub: userId, role }, env.accessSecret, { expiresIn: env.accessTokenTtl as jwt.SignOptions['expiresIn'] });
+}
+
+export function createRefreshToken(userId: string, sessionId: string): string {
+  // jti makes each rotation a distinct signed token, even within the same second.
+  return jwt.sign({ sub: userId, sid: sessionId, jti: randomUUID() }, env.refreshSecret, { expiresIn: env.refreshTokenTtl as jwt.SignOptions['expiresIn'] });
+}
+
+function verify(token: string, secret: string): JwtPayload {
+  const payload = jwt.verify(token, secret);
+  if (typeof payload === 'string') throw new Error('Invalid token payload');
+  return payload;
+}
+
+export function verifyAccessToken(token: string): AccessPayload {
+  const payload = verify(token, env.accessSecret);
+  if (typeof payload.sub !== 'string' || (payload.role !== 'USER' && payload.role !== 'ADMIN')) throw new Error('Invalid access token');
+  return { sub: payload.sub, role: payload.role };
+}
+
+export function verifyRefreshToken(token: string): RefreshPayload {
+  const payload = verify(token, env.refreshSecret);
+  if (typeof payload.sub !== 'string' || typeof payload.sid !== 'string') throw new Error('Invalid refresh token');
+  return { sub: payload.sub, sid: payload.sid };
+}
+
+export function refreshTokenExpiresAt(): Date {
+  return new Date(Date.now() + durationInMilliseconds(env.refreshTokenTtl));
+}
+</file>
+
+<file path="src/utils/password.ts">
+import bcrypt from 'bcryptjs';
+
+const SALT_ROUNDS = 12;
+
+export function hashPassword(value: string): Promise<string> {
+  return bcrypt.hash(value, SALT_ROUNDS);
+}
+
+export function comparePassword(value: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(value, hash);
+}
+</file>
+
+<file path="src/utils/token-hash.ts">
+import { createHash, timingSafeEqual } from 'node:crypto';
+
+// bcrypt truncates input after 72 bytes. JWTs are longer, so use SHA-256 for
+// refresh-token comparison and keep bcrypt exclusively for user passwords.
+export function hashRefreshToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function refreshTokenMatches(token: string, storedHash: string): boolean {
+  const tokenHash = Buffer.from(hashRefreshToken(token), 'hex');
+  const savedHash = Buffer.from(storedHash, 'hex');
+  return tokenHash.length === savedHash.length && timingSafeEqual(tokenHash, savedHash);
+}
+</file>
+
+<file path="src/server.ts">
+import { app } from './app.js';
+import { connectDatabase } from './config/database.js';
+import { env } from './config/env.js';
+
+async function start(): Promise<void> {
+  await connectDatabase();
+  app.listen(env.port, () => console.log(`TV Hub listening on http://localhost:${env.port}`));
+}
+
+start().catch((error: unknown) => {
+  console.error('Could not start TV Hub:', error);
+  process.exit(1);
+});
+</file>
+
+<file path="tests/favorites.test.ts">
+import request from 'supertest';
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { app } from '../src/app.js';
+import { Channel } from '../src/models/channel.model.js';
+import { Favorite } from '../src/models/favorite.model.js';
+import { Session } from '../src/models/session.model.js';
+import { User } from '../src/models/user.model.js';
+
+let mongo: MongoMemoryServer;
+let channelId: string;
+
+beforeAll(async () => {
+  mongo = await MongoMemoryServer.create();
+  await mongoose.connect(mongo.getUri());
+});
+
+beforeEach(async () => {
+  await Favorite.deleteMany({});
+  await Session.deleteMany({});
+  await User.deleteMany({});
+  await Channel.deleteMany({});
+
+  const channel = await Channel.create({
+    name: 'Favorite Channel',
+    logoUrl: 'https://example.com/logo.png',
+    streamUrl: 'https://example.com/stream.m3u8',
+    country: 'Mexico',
+    categories: ['News'],
+    isActive: true
+  });
+  channelId = channel.id;
+});
+
+afterAll(async () => {
+  await mongoose.disconnect();
+  await mongo.stop();
+});
+
+test('favorites require authentication', async () => {
+  await request(app).get('/api/favorites').expect(401);
+  await request(app).post(`/api/favorites/${channelId}`).expect(401);
+});
+
+test('a user can add, list, and remove a favorite channel', async () => {
+  const agent = request.agent(app);
+  await agent.post('/api/auth/register').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(201);
+
+  await agent.post(`/api/favorites/${channelId}`).expect(201);
+
+  const listed = await agent.get('/api/favorites').expect(200);
+  expect(listed.body.favorites).toHaveLength(1);
+  expect(listed.body.favorites[0].channelId).toEqual(expect.objectContaining({ _id: expect.any(String), name: 'Favorite Channel' }));
+
+  await agent.delete(`/api/favorites/${channelId}`).expect(204);
+  await agent.get('/api/favorites').expect(200, { favorites: [] });
+});
+
+test('a user cannot add the same channel to favorites twice', async () => {
+  const agent = request.agent(app);
+  await agent.post('/api/auth/register').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(201);
+  await agent.post(`/api/favorites/${channelId}`).expect(201);
+  await agent.post(`/api/favorites/${channelId}`).expect(409, {
+    error: { code: 'FAVORITE_ALREADY_EXISTS', message: 'Channel is already in favorites' }
+  });
+});
+</file>
+
+<file path="tests/health.test.ts">
+import request from 'supertest';
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { app } from '../src/app.js';
+
+let mongo: MongoMemoryServer;
+
+beforeAll(async () => {
+  mongo = await MongoMemoryServer.create();
+  await mongoose.connect(mongo.getUri());
+});
+
+afterAll(async () => {
+  await mongoose.disconnect();
+  await mongo.stop();
+});
+
+test('GET /health returns ok', async () => {
+  await request(app).get('/health').expect(200, { status: 'ok' });
+});
+
+test('GET /ready returns connected while MongoDB is connected', async () => {
+  await request(app).get('/ready').expect(200, { status: 'ready', database: 'connected' });
+});
+</file>
+
+<file path="tests/reports.test.ts">
+import { readdir, unlink } from 'node:fs/promises';
+import request from 'supertest';
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { app } from '../src/app.js';
+import { Channel } from '../src/models/channel.model.js';
+import { Report } from '../src/models/report.model.js';
+import { Session } from '../src/models/session.model.js';
+import { User } from '../src/models/user.model.js';
+import { reportUploadsDirectory } from '../src/middleware/upload.js';
+
+let mongo: MongoMemoryServer;
+let channelId: string;
+
+async function registerAgent(email: string) {
+  const agent = request.agent(app);
+  await agent.post('/api/auth/register').send({ email, password: 'StrongPass123!' }).expect(201);
+  return agent;
+}
+
+async function clearUploadedEvidence() {
+  const names = await readdir(reportUploadsDirectory);
+  await Promise.all(names.filter((name) => name !== '.gitkeep').map((name) => unlink(`${reportUploadsDirectory}/${name}`)));
+}
+
+beforeAll(async () => {
+  mongo = await MongoMemoryServer.create();
+  await mongoose.connect(mongo.getUri());
+});
+
+beforeEach(async () => {
+  await Report.deleteMany({});
+  await Session.deleteMany({});
+  await User.deleteMany({});
+  await Channel.deleteMany({});
+  await clearUploadedEvidence();
+
+  const channel = await Channel.create({
+    name: 'Report Channel',
+    logoUrl: 'https://example.com/logo.png',
+    streamUrl: 'https://example.com/stream.m3u8',
+    country: 'Mexico',
+    categories: ['News'],
+    isActive: true
+  });
+  channelId = channel.id;
+});
+
+afterAll(async () => {
+  await clearUploadedEvidence();
+  await mongoose.disconnect();
+  await mongo.stop();
+});
+
+test('reports require authentication', async () => {
+  await request(app).get('/api/reports').expect(401);
+  await request(app).post('/api/reports').expect(401);
+});
+
+test('an authenticated user can create and list a report', async () => {
+  const agent = await registerAgent('reporter@example.com');
+
+  const created = await agent.post('/api/reports').field({
+    channelId,
+    reason: 'AUDIO_PROBLEM',
+    description: 'The channel has no sound.'
+  }).expect(201);
+
+  expect(created.body.report).toEqual(expect.objectContaining({
+    channelId,
+    reason: 'AUDIO_PROBLEM',
+    description: 'The channel has no sound.',
+    status: 'OPEN'
+  }));
+
+  const listed = await agent.get('/api/reports').expect(200);
+  expect(listed.body.reports).toHaveLength(1);
+  expect(listed.body.reports[0].channelId).toEqual(expect.objectContaining({ name: 'Report Channel' }));
+});
+
+test('an image evidence file is stored and exposed through its URL', async () => {
+  const agent = await registerAgent('image@example.com');
+  const created = await agent.post('/api/reports').field({
+    channelId,
+    reason: 'VIDEO_PROBLEM',
+    description: 'The image is frozen.'
+  }).attach('evidence', Buffer.from('image evidence'), { filename: 'evidence.png', contentType: 'image/png' }).expect(201);
+
+  expect(created.body.report.evidenceUrl).toMatch(/^\/uploads\/reports\/.+\.png$/);
+  await request(app).get(created.body.report.evidenceUrl).expect(200);
+});
+
+test('reports reject invalid report data and invalid files', async () => {
+  const agent = await registerAgent('validation@example.com');
+  await agent.post('/api/reports').field({ channelId, reason: 'NOT_A_REASON', description: 'A valid description.' }).expect(400, {
+    error: { code: 'INVALID_REPORT_REASON', message: 'Report reason is invalid' }
+  });
+  await agent.post('/api/reports').field({ channelId, reason: 'OTHER', description: '' }).expect(400, {
+    error: { code: 'INVALID_REPORT_DESCRIPTION', message: 'Description is required' }
+  });
+  await agent.post('/api/reports').field({ channelId, reason: 'OTHER', description: 'Text evidence is invalid.' })
+    .attach('evidence', Buffer.from('not an image'), { filename: 'evidence.txt', contentType: 'text/plain' })
+    .expect(400, { error: { code: 'INVALID_EVIDENCE_FILE', message: 'Evidence must be an image file' } });
+  await agent.post('/api/reports').field({ channelId, reason: 'OTHER', description: 'Large evidence is invalid.' })
+    .attach('evidence', Buffer.alloc(2 * 1024 * 1024 + 1), { filename: 'large.png', contentType: 'image/png' })
+    .expect(400, { error: { code: 'UPLOAD_ERROR', message: 'Evidence image must be 2 MB or smaller' } });
+});
+
+test('reports only list the current user reports', async () => {
+  const firstUser = await registerAgent('first@example.com');
+  const secondUser = await registerAgent('second@example.com');
+  await firstUser.post('/api/reports').field({ channelId, reason: 'OTHER', description: 'First report.' }).expect(201);
+  await secondUser.post('/api/reports').field({ channelId, reason: 'OTHER', description: 'Second report.' }).expect(201);
+
+  const listed = await firstUser.get('/api/reports').expect(200);
+  expect(listed.body.reports).toHaveLength(1);
+  expect(listed.body.reports[0].description).toBe('First report.');
+});
+</file>
+
+<file path="tests/setup.ts">
+process.env.NODE_ENV = 'test';
+process.env.MONGO_URI = 'mongodb://127.0.0.1:27017/tvhub-test';
+process.env.JWT_ACCESS_SECRET = 'test-access-secret-that-is-long-enough';
+process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-that-is-long-enough';
+process.env.ACCESS_TOKEN_TTL = '15m';
+process.env.REFRESH_TOKEN_TTL = '7d';
+</file>
+
+<file path="uploads/reports/.gitkeep">
+
+</file>
+
+<file path=".env.example">
+# This file is used automatically only for local development when .env is absent.
+# Copy it to .env to customize your local configuration.
+# Never use these example JWT secrets in production.
+PORT=3000
+NODE_ENV=development
+MONGO_URI=mongodb://localhost:27017/tvhub
+JWT_ACCESS_SECRET=replace-with-a-long-access-secret
+JWT_REFRESH_SECRET=replace-with-a-different-long-refresh-secret
+ACCESS_TOKEN_TTL=15m
+REFRESH_TOKEN_TTL=7d
+</file>
+
+<file path="docker-compose.yml">
+services:
+  mongo:
+    image: mongo:8.2
+    container_name: tvhub-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  mongo_data:
+</file>
+
+<file path="jest.config.cjs">
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  setupFiles: ['<rootDir>/tests/setup.ts'],
+  moduleNameMapper: { '^(\\.{1,2}/.*)\\.js$': '$1' },
+  testMatch: ['**/tests/**/*.test.ts'],
+  testTimeout: 30000
+};
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "src",
+    "outDir": "dist",
+    "strict": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"]
+}
+</file>
+
+<file path="src/controllers/auth.controller.ts">
+import type { RequestHandler } from "express";
+import { Types } from "mongoose";
+import { Session } from "../models/session.model.js";
+import { User, type Role } from "../models/user.model.js";
+import { AppError } from "../utils/app-error.js";
+import { clearAuthCookies, setAuthCookies } from "../utils/cookies.js";
+import {
+  createAccessToken,
+  createRefreshToken,
+  refreshTokenExpiresAt,
+  verifyRefreshToken,
+} from "../utils/jwt.js";
+import { comparePassword, hashPassword } from "../utils/password.js";
+import { hashRefreshToken, refreshTokenMatches } from "../utils/token-hash.js";
+
+type Credentials = { email?: unknown; password?: unknown };
+
+// Leer y validar las credenciales del usuario (email y password) desde el cuerpo de la solicitud.
+// Si las credenciales no son válidas, se lanza un error de validación.
+function readCredentials(body: Credentials): {
+  email: string;
+  password: string;
+} {
+  const email =
+    typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  // Comprueba si el texto de la variable email no cumple con el patrón de la expresión regular.
+  if (!/^\S+@\S+\.\S+$/.test(email) || password.length < 8) {
+    throw new AppError(
+      400,
+      "VALIDATION_ERROR",
+      "Provide a valid email and a password of at least 8 characters",
+    );
+  }
+
+  return { email, password };
+}
+
+// Helper para devolver un objeto de usuario público que contiene solo los campos necesarios para la respuesta
+// para no devolver todo el documento MongoDB y exponer información sensible como el hash de la contraseña.
+function publicUser(user: { _id: Types.ObjectId; email: string; role: Role }) {
+  return { id: user._id.toString(), email: user.email, role: user.role };
+}
+
+// Se crea un session id y un refresh token para el usuario autenticado,
+// Se guarda la sesión en la base de datos y se devuelve un objeto con el access token y el refresh token.
+async function createSessionTokens(
+  user: { _id: Types.ObjectId; role: Role },
+  userAgent?: string,
+) {
+  const sessionId = new Types.ObjectId();
+  const userId = user._id.toString();
+  const refreshToken = createRefreshToken(userId, sessionId.toString());
+
+  // La sesion se guarda en MongoDB para que podamos invalidar el refresh token si el usuario cierra sesión
+  // o si el refresh token se ve comprometido.
+  await Session.create({
+    _id: sessionId,
+    userId: user._id,
+    refreshTokenHash: hashRefreshToken(refreshToken),
+    expiresAt: refreshTokenExpiresAt(),
+    userAgent,
+  });
+
+  return { accessToken: createAccessToken(userId, user.role), refreshToken };
+}
+
+// Lee y valida si en MongoDB ya existe un usuario con el mismo email, si no existe,
+// se crea un nuevo usuario con el email y la contraseña hasheada.
+export const register: RequestHandler = async (request, response) => {
+  const { email, password } = readCredentials(request.body);
+  const existingUser = await User.exists({ email });
+  if (existingUser)
+    throw new AppError(409, "EMAIL_ALREADY_EXISTS", "Email already exists");
+
+  // conveierte la password en un hash seguro antes de guardarla en la base de datos
+  // MiPassword123 -> bcrypt -> $2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW
+  const passwordHash = await hashPassword(password);
+  // Crea un nuevo usuario en la base de datos con el email y el hash de la password
+  const user = await User.create({ email, passwordHash, role: "USER" });
+  // Crea un session id y un refresh token para el usuario autenticado
+  const tokens = await createSessionTokens(user, request.get("user-agent"));
+  // Envia el access token y el refresh token al cliente en cookies seguras
+  setAuthCookies(response, tokens.accessToken, tokens.refreshToken);
+  response.status(201).json({ user: publicUser(user) });
+};
+
+export const login: RequestHandler = async (request, response) => {
+  const { email, password } = readCredentials(request.body);
+  const user = await User.findOne({ email });
+
+  if (!user || !(await comparePassword(password, user.passwordHash))) {
+    throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+  }
+
+  const tokens = await createSessionTokens(user, request.get("user-agent"));
+  setAuthCookies(response, tokens.accessToken, tokens.refreshToken);
+  response.json({ user: publicUser(user) });
+};
+
+/*
+¿Existe la sesión?
+¿Pertenece al usuario?
+¿Sigue activa?
+¿No expiró?
+¿El refresh token coincide?
+*/
+export const refresh: RequestHandler = async (request, response) => {
+  const refreshToken = request.cookies.refreshToken;
+  if (typeof refreshToken !== "string") {
+    throw new AppError(401, "UNAUTHORIZED", "Refresh token is required");
+  }
+
+  let payload: ReturnType<typeof verifyRefreshToken>;
+  try {
+    payload = verifyRefreshToken(refreshToken);
+  } catch {
+    throw new AppError(401, "UNAUTHORIZED", "Invalid or expired refresh token");
+  }
+
+  const session = await Session.findById(payload.sid);
+  const isValidSession =
+    session &&
+    session.userId.toString() === payload.sub &&
+    !session.revokedAt &&
+    session.expiresAt > new Date() &&
+    refreshTokenMatches(refreshToken, session.refreshTokenHash);
+
+  if (!isValidSession) {
+    throw new AppError(401, "UNAUTHORIZED", "Invalid or expired refresh token");
+  }
+
+  const user = await User.findById(payload.sub);
+  if (!user) {
+    throw new AppError(401, "UNAUTHORIZED", "User no longer exists");
+  }
+
+  const newRefreshToken = createRefreshToken(user.id, session.id);
+  session.refreshTokenHash = hashRefreshToken(newRefreshToken);
+  session.expiresAt = refreshTokenExpiresAt();
+  await session.save();
+
+  setAuthCookies(
+    response,
+    createAccessToken(user.id, user.role),
+    newRefreshToken,
+  );
+  response.json({ user: publicUser(user) });
+};
+
+export const logout: RequestHandler = async (request, response) => {
+  const refreshToken = request.cookies.refreshToken;
+  if (typeof refreshToken !== "string") {
+    throw new AppError(401, "UNAUTHORIZED", "Refresh token is required");
+  }
+
+  let payload: ReturnType<typeof verifyRefreshToken>;
+  try {
+    payload = verifyRefreshToken(refreshToken);
+  } catch {
+    throw new AppError(401, "UNAUTHORIZED", "Invalid or expired refresh token");
+  }
+
+  const session = await Session.findById(payload.sid);
+  const isCurrentSession =
+    session &&
+    session.userId.toString() === payload.sub &&
+    !session.revokedAt &&
+    session.expiresAt > new Date() &&
+    refreshTokenMatches(refreshToken, session.refreshTokenHash);
+
+  if (!isCurrentSession) {
+    throw new AppError(401, "UNAUTHORIZED", "Invalid or expired refresh token");
+  }
+
+  session.revokedAt = new Date();
+  await session.save();
+  clearAuthCookies(response);
+  response.status(204).send();
+};
+
+export const logoutAll: RequestHandler = async (request, response) => {
+  const auth = request.auth;
+  if (!auth)
+    throw new AppError(401, "UNAUTHORIZED", "Authentication is required");
+
+  await Session.updateMany(
+    { userId: auth.userId, revokedAt: { $exists: false } },
+    { $set: { revokedAt: new Date() } },
+  );
+  clearAuthCookies(response);
+  response.status(204).send();
+};
+</file>
+
+<file path="src/middleware/authenticate.middleware.ts">
+import type { RequestHandler } from 'express';
+import { AppError } from '../utils/app-error.js';
+import { verifyAccessToken } from '../utils/jwt.js';
+
+export const authenticate: RequestHandler = (request, response, next) => {
+  const accessToken = request.cookies.accessToken;
+  if (typeof accessToken !== 'string') {
+    throw new AppError(401, 'UNAUTHORIZED', 'Authentication is required');
+  }
+
+  try {
+    const payload = verifyAccessToken(accessToken);
+    request.auth = { userId: payload.sub, role: payload.role };
+    next();
+  } catch {
+    throw new AppError(401, 'UNAUTHORIZED', 'Invalid or expired access token');
+  }
+};
+</file>
+
+<file path="src/middleware/authorize.middleware.ts">
+import type { RequestHandler } from 'express';
+import type { Role } from '../models/user.model.js';
+import { AppError } from '../utils/app-error.js';
+
+export function authorize(...allowedRoles: Role[]): RequestHandler {
+  return (request, response, next) => {
+    const auth = request.auth;
+    if (!auth || !allowedRoles.includes(auth.role)) {
+      throw new AppError(403, 'FORBIDDEN', 'You do not have permission to access this resource');
+    }
+
+    next();
+  };
+}
+</file>
+
+<file path="src/middleware/error.middleware.ts">
+import type { ErrorRequestHandler, RequestHandler } from 'express';
+import multer from 'multer';
+import { AppError } from '../utils/app-error.js';
+
+export const notFound: RequestHandler = (_request, response) => {
+  response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
+};
+
+export const errorHandler: ErrorRequestHandler = (error: unknown, _request, response, _next) => {
+  if (error instanceof AppError) {
+    response.status(error.status).json({ error: { code: error.code, message: error.message } });
+    return;
+  }
+
+  if (error instanceof multer.MulterError) {
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'Evidence image must be 2 MB or smaller'
+      : 'Could not upload evidence image';
+    response.status(400).json({ error: { code: 'UPLOAD_ERROR', message } });
+    return;
+  }
+
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 11000) {
+    response.status(409).json({ error: { code: 'EMAIL_ALREADY_EXISTS', message: 'Email already exists' } });
+    return;
+  }
+
+  console.error(error);
+  response.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+};
+</file>
+
+<file path="src/public/js/favorites.js">
+const favoritesList = document.querySelector('#favorites-list');
+const favoritesStatus = document.querySelector('#favorites-status');
+const searchInput = document.querySelector('#favorite-search');
+const sortSelect = document.querySelector('#favorite-sort');
+let favorites = [];
+
+async function loadUser() {
+  const response = await fetch('/api/users/me');
+  if (!response.ok) { location.href = '/login'; return false; }
+  const user = await response.json();
+  document.querySelector('#welcome').textContent = `Welcome, ${user.email}`;
+  return true;
+}
+
+function openChannel(channelId) { location.href = `/watch.html?${new URLSearchParams({ channelId })}`; }
+
+function createFavoriteCard(favorite) {
+  const channel = favorite.channelId;
+  const card = document.createElement('article');
+  card.className = 'channel-card'; card.tabIndex = 0; card.setAttribute('role', 'link');
+  card.addEventListener('click', () => openChannel(channel._id));
+  card.addEventListener('keydown', (event) => { if (event.key === 'Enter') openChannel(channel._id); });
+  const logo = document.createElement('img'); logo.src = channel.logoUrl || '/images/channel-placeholder.svg'; logo.alt = `${channel.name} logo`; logo.className = 'channel-logo'; logo.addEventListener('error', () => { logo.src = '/images/channel-placeholder.svg'; });
+  const name = document.createElement('h3'); name.textContent = channel.name;
+  const removeButton = document.createElement('button'); removeButton.type = 'button'; removeButton.className = 'favorite-button'; removeButton.textContent = '★'; removeButton.setAttribute('aria-label', `Remove ${channel.name} from favorites`); removeButton.addEventListener('click', (event) => { event.stopPropagation(); removeFavorite(channel._id); });
+  const header = document.createElement('div'); header.className = 'channel-card-header'; header.append(name, removeButton);
+  const country = document.createElement('p'); country.className = 'channel-country'; country.textContent = channel.country || 'Country unavailable';
+  const categories = document.createElement('p'); categories.className = 'channel-categories'; categories.textContent = channel.categories.join(', ') || 'Live TV';
+  card.append(logo, header, country, categories); return card;
+}
+
+function renderFavorites() {
+  const search = searchInput.value.trim().toLowerCase();
+  const visibleFavorites = favorites.filter((favorite) => favorite.channelId && favorite.channelId.name.toLowerCase().includes(search));
+  visibleFavorites.sort((first, second) => sortSelect.value === 'name'
+    ? first.channelId.name.localeCompare(second.channelId.name)
+    : new Date(second.createdAt) - new Date(first.createdAt));
+  favoritesStatus.textContent = `${visibleFavorites.length} favorite${visibleFavorites.length === 1 ? '' : 's'}`;
+  if (favorites.length === 0) { favoritesList.replaceChildren(Object.assign(document.createElement('p'), { className: 'empty-state', textContent: 'You do not have favorite channels yet.' })); return; }
+  if (visibleFavorites.length === 0) { favoritesList.replaceChildren(Object.assign(document.createElement('p'), { className: 'empty-state', textContent: 'No channels found.' })); return; }
+  favoritesList.replaceChildren(...visibleFavorites.map(createFavoriteCard));
+}
+
+async function loadFavorites() {
+  const response = await fetch('/api/favorites');
+  if (!response.ok) { favoritesStatus.textContent = 'Could not load favorites.'; return; }
+  ({ favorites } = await response.json());
+  renderFavorites();
+}
+
+async function removeFavorite(channelId) {
+  const response = await fetch(`/api/favorites/${channelId}`, { method: 'DELETE' });
+  if (response.ok) await loadFavorites();
+  else favoritesStatus.textContent = 'Could not update favorites.';
+}
+
+searchInput.addEventListener('input', renderFavorites);
+sortSelect.addEventListener('change', renderFavorites);
+document.querySelector('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; });
+async function start() { if (await loadUser()) await loadFavorites(); }
+start();
+</file>
+
+<file path="src/public/country.html">
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Hub Country</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+</head>
+
+<body class="app-body">
+    <main class="app-shell">
+        <aside class="sidebar"><a class="brand" href="/">TV<span>HUB</span></a>
+            <nav aria-label="Main navigation"><a class="nav-link" href="/">⌂ <span>Home</span></a><a class="nav-link"
+                    href="/favorites.html">☆ <span>Favorites</span></a><a class="nav-link"
+                    href="/reports.html">⚐ <span>Reports</span></a></nav>
+        </aside>
+        <section class="content">
+            <header class="topbar"><label class="search-box" for="channel-search"><span>⌕</span><input
+                        id="channel-search" type="search" placeholder="Search channels" /></label>
+                <div class="account">
+                    <p id="welcome">Loading your session…</p><button id="logout" class="logout-button">Log out</button>
+                </div>
+            </header><a class="back-link" href="/">← Back to Home</a>
+            <section class="page-hero">
+                <p class="eyebrow">COUNTRY</p>
+                <h1 id="country-name">Channels</h1>
+                <p id="country-status">Loading channels…</p>
+            </section>
+            <section class="browse-section"><label class="filter-control" for="channel-sort">Sort <select
+                        id="channel-sort">
+                        <option value="name">Name A-Z</option>
+                        <option value="newest">Newest first</option>
+                    </select></label>
+                <div id="country-list" class="channel-grid"></div>
+            </section>
+        </section>
+    </main>
+    <script src="/js/country.js"></script>
+</body>
+
+</html>
+</file>
+
+<file path="src/public/login.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Hub · Sign in</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body class="auth-body">
+    <main class="auth-layout">
+      <section class="auth-intro">
+        <a class="brand" href="/">TV<span>HUB</span></a>
+        <div>
+          <p class="eyebrow">LIVE TELEVISION</p>
+          <h1>Your live channels,<br />in one place.</h1>
+          <p>Sign in to browse channels by country, save favorites, and start watching.</p>
+        </div>
+      </section>
+      <section class="auth-panel" aria-labelledby="auth-title">
+        <div class="auth-card">
+          <p class="eyebrow">WELCOME BACK</p>
+          <h2 id="auth-title">Sign in to TV Hub</h2>
+          <p class="auth-copy">Continue to your live TV library.</p>
+          <form id="auth-form">
+            <label>Email<input name="email" type="email" autocomplete="email" required /></label>
+            <label>Password<input name="password" type="password" autocomplete="current-password" minlength="8" required /></label>
+            <button class="auth-submit">Sign In</button>
+            <p id="error" class="error" aria-live="polite"></p>
+          </form>
+          <p class="auth-switch">New to TV Hub? <a href="/register">Create an account</a></p>
+        </div>
+      </section>
+    </main>
+    <script src="/js/auth.js"></script>
+  </body>
+</html>
+</file>
+
+<file path="src/public/register.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Hub · Create account</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body class="auth-body">
+    <main class="auth-layout">
+      <section class="auth-intro">
+        <a class="brand" href="/">TV<span>HUB</span></a>
+        <div>
+          <p class="eyebrow">LIVE TELEVISION</p>
+          <h1>Live TV from<br />around the world.</h1>
+          <p>Create an account to explore channels, save your favorites, and watch live streams.</p>
+        </div>
+      </section>
+      <section class="auth-panel" aria-labelledby="auth-title">
+        <div class="auth-card">
+          <p class="eyebrow">GET STARTED</p>
+          <h2 id="auth-title">Create your account</h2>
+          <p class="auth-copy">Your TV Hub library is ready for you.</p>
+          <form id="auth-form">
+            <label>Email<input name="email" type="email" autocomplete="email" required /></label>
+            <label>Password<input name="password" type="password" autocomplete="new-password" minlength="8" required /></label>
+            <button class="auth-submit">Create Account</button>
+            <p id="error" class="error" aria-live="polite"></p>
+          </form>
+          <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+        </div>
+      </section>
+    </main>
+    <script src="/js/auth.js"></script>
+  </body>
+</html>
+</file>
+
+<file path="src/public/watch.html">
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Watch · TV Hub</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.15.12/dist/shaka-player.compiled.min.js"></script>
+</head>
+
+<body class="app-body">
+    <main class="app-shell">
+        <aside class="sidebar"><a class="brand" href="/">TV<span>HUB</span></a>
+            <nav aria-label="Main navigation"><a class="nav-link" href="/">⌂ <span>Home</span></a><a class="nav-link"
+                    href="/favorites.html">☆ <span>Favorites</span></a><a class="nav-link"
+                    href="/reports.html">⚐ <span>Reports</span></a></nav>
+        </aside>
+        <section class="content">
+            <header class="topbar"><a class="back-link" href="javascript:history.back()">← Back</a>
+                <div class="account">
+                    <p id="welcome">Loading your session…</p><button id="logout" class="logout-button">Log out</button>
+                </div>
+            </header>
+            <section class="watch-layout">
+                <div class="player-shell">
+                    <p id="player-status" class="player-status">Loading channel…</p><video id="video-player"
+                        class="video-player" controls autoplay></video><button id="retry-player" class="retry-button"
+                        hidden>Try again</button>
+                </div>
+                <article class="channel-details"><img id="channel-logo" class="detail-logo"
+                        src="/images/channel-placeholder.svg" alt="" />
+                    <div>
+                        <p class="eyebrow">LIVE CHANNEL</p>
+                        <h1 id="channel-name">Loading…</h1>
+                        <p id="channel-country"></p>
+                        <p id="channel-categories" class="channel-categories"></p><button id="favorite-button"
+                            class="watch-favorite" type="button" hidden></button><a id="report-problem"
+                            class="watch-report" href="/reports.html">Report problem</a>
+                    </div>
+                </article>
+            </section>
+        </section>
+    </main>
+    <script src="/js/watch.js"></script>
+</body>
+
+</html>
+</file>
+
+<file path="tests/auth.test.ts">
+import request from 'supertest';
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { app } from '../src/app.js';
+import { User } from '../src/models/user.model.js';
+import { Session } from '../src/models/session.model.js';
+
+let mongo: MongoMemoryServer;
+
+beforeAll(async () => {
+  mongo = await MongoMemoryServer.create();
+  await mongoose.connect(mongo.getUri());
+});
+
+beforeEach(async () => {
+  await User.deleteMany({});
+  await Session.deleteMany({});
+});
+
+afterAll(async () => {
+  await mongoose.disconnect();
+  await mongo.stop();
+});
+
+test('register creates a USER, stores a hash, and starts a session', async () => {
+  const response = await request(app).post('/api/auth/register').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(201);
+  expect(response.body.user).toEqual(expect.objectContaining({ email: 'student@example.com', role: 'USER' }));
+  expect(response.headers['set-cookie']).toHaveLength(2);
+  const user = await User.findOne({ email: 'student@example.com' }).lean();
+  expect(user?.passwordHash).not.toBe('StrongPass123!');
+  expect(await Session.countDocuments({ userId: user?._id })).toBe(1);
+});
+
+test('register rejects a duplicate email', async () => {
+  await request(app).post('/api/auth/register').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(201);
+  const response = await request(app).post('/api/auth/register').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(409);
+  expect(response.body.error.code).toBe('EMAIL_ALREADY_EXISTS');
+});
+
+test('login validates credentials and protected routes require the access token', async () => {
+  await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'missing@example.com', password: 'StrongPass123!' })
+    .expect(401, { error: { code: 'INVALID_CREDENTIALS', message: 'Invalid email or password' } });
+
+  await request(app).get('/api/users/me').expect(401);
+
+  const agent = request.agent(app);
+  await agent.post('/api/auth/register').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(201);
+  await agent.post('/api/auth/login').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(200);
+  const currentUser = await agent.get('/api/users/me').expect(200);
+  expect(currentUser.body).toEqual(expect.objectContaining({ email: 'student@example.com', role: 'USER' }));
+  await agent.get('/api/admin/demo').expect(403);
+
+  await User.updateOne({ email: 'student@example.com' }, { role: 'ADMIN' });
+  await agent.post('/api/auth/login').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(200);
+  await agent.get('/api/admin/demo').expect(200, { message: 'Admin access granted' });
+});
+
+test('refresh rotates tokens and logout revokes the current session', async () => {
+  const agent = request.agent(app);
+  const registration = await agent
+    .post('/api/auth/register')
+    .send({ email: 'student@example.com', password: 'StrongPass123!' })
+    .expect(201);
+  const originalCookies = registration.headers['set-cookie'];
+
+  const refreshed = await agent.post('/api/auth/refresh').expect(200);
+  expect(refreshed.body).toEqual(expect.objectContaining({ user: expect.objectContaining({ email: 'student@example.com' }) }));
+  await request(app).post('/api/auth/refresh').set('Cookie', originalCookies).expect(401);
+
+  await agent.post('/api/auth/logout').expect(204);
+  await agent.post('/api/auth/refresh').expect(401);
+});
+
+test('logout all revokes every active session', async () => {
+  const firstAgent = request.agent(app);
+  const secondAgent = request.agent(app);
+  await firstAgent.post('/api/auth/register').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(201);
+  await secondAgent.post('/api/auth/login').send({ email: 'student@example.com', password: 'StrongPass123!' }).expect(200);
+
+  await firstAgent.post('/api/auth/logout-all').expect(204);
+  await secondAgent.post('/api/auth/refresh').expect(401);
+});
+</file>
+
+<file path="src/controllers/favorite.controller.ts">
+import type { RequestHandler } from 'express';
+import { isValidObjectId } from 'mongoose';
+import { Channel } from '../models/channel.model.js';
+import { Favorite } from '../models/favorite.model.js';
+import { AppError } from '../utils/app-error.js';
+
+function readChannelId(value: unknown): string {
+  if (typeof value !== 'string' || !isValidObjectId(value)) {
+    throw new AppError(400, 'INVALID_CHANNEL_ID', 'Channel id is invalid');
+  }
+
+  return value;
+}
+
+function getUserId(request: Parameters<RequestHandler>[0]): string {
+  if (!request.auth) throw new AppError(401, 'UNAUTHORIZED', 'Authentication is required');
+  return request.auth.userId;
+}
+
+export const listFavorites: RequestHandler = async (request, response) => {
+  const favorites = await Favorite.find({ userId: getUserId(request) })
+    .populate('channelId')
+    .sort('-createdAt');
+
+  response.json({ favorites });
+};
+
+export const addFavorite: RequestHandler = async (request, response) => {
+  const userId = getUserId(request);
+  const channelId = readChannelId(request.params.channelId);
+  const channel = await Channel.findOne({ _id: channelId, isActive: true });
+
+  if (!channel) throw new AppError(404, 'CHANNEL_NOT_FOUND', 'Channel was not found');
+
+  const existingFavorite = await Favorite.findOne({ userId, channelId });
+  if (existingFavorite) {
+    throw new AppError(409, 'FAVORITE_ALREADY_EXISTS', 'Channel is already in favorites');
+  }
+
+  const favorite = await Favorite.create({ userId, channelId });
+  response.status(201).json({ favorite });
+};
+
+export const removeFavorite: RequestHandler = async (request, response) => {
+  const favorite = await Favorite.findOneAndDelete({
+    userId: getUserId(request),
+    channelId: readChannelId(request.params.channelId)
+  });
+
+  if (!favorite) throw new AppError(404, 'FAVORITE_NOT_FOUND', 'Channel is not in favorites');
+
+  response.status(204).send();
+};
+</file>
+
+<file path="src/models/channel.model.ts">
+import { model, Schema } from 'mongoose';
+
+const channelSchema = new Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    logoUrl: { type: String, required: true, trim: true },
+    streamUrl: { type: String, required: true, trim: true },
+    country: { type: String, required: true, trim: true },
+    categories: { type: [String], required: true, default: [] },
+    isActive: { type: Boolean, required: true, default: true },
+    tvgId: { type: String, trim: true },
+    streamType: { type: String, enum: ['hls', 'dash'] },
+    httpReferrer: { type: String, trim: true },
+    httpUserAgent: { type: String, trim: true }
+  },
+  { timestamps: true }
+);
+
+export const Channel = model('Channel', channelSchema);
+</file>
+
+<file path="src/public/js/watch.js">
+const channelId = new URLSearchParams(location.search).get('channelId');
+const video = document.querySelector('#video-player');
+const playerStatus = document.querySelector('#player-status');
+const retryButton = document.querySelector('#retry-player');
+const favoriteButton = document.querySelector('#favorite-button');
+const reportProblemLink = document.querySelector('#report-problem');
+let channel;
+let player;
+let isFavorite = false;
+
+async function loadUser() {
+  const response = await fetch('/api/users/me');
+  if (!response.ok) { location.href = '/login'; return false; }
+  const user = await response.json(); document.querySelector('#welcome').textContent = `Welcome, ${user.email}`; return true;
+}
+function showPlayerState(state, message) {
+  playerStatus.textContent = message; playerStatus.dataset.state = state;
+  video.hidden = state !== 'playing'; retryButton.hidden = state !== 'error';
+}
+async function loadFavoriteState() {
+  const response = await fetch('/api/favorites'); if (!response.ok) return;
+  const { favorites } = await response.json(); isFavorite = favorites.some((favorite) => favorite.channelId && favorite.channelId._id === channel._id);
+  favoriteButton.hidden = false; favoriteButton.textContent = isFavorite ? '★ Remove from Favorites' : '☆ Add to Favorites';
+}
+async function toggleFavorite() {
+  const response = await fetch(`/api/favorites/${channel._id}`, { method: isFavorite ? 'DELETE' : 'POST' });
+  if (!response.ok) return;
+  isFavorite = !isFavorite; favoriteButton.textContent = isFavorite ? '★ Remove from Favorites' : '☆ Add to Favorites';
+}
+async function playChannel() {
+  // TODO 7:
+  // Inicializa Shaka Player con `video`, carga `channel.streamUrl` y maneja sus estados.
+  // TODO 8: muestra los estados Loading, Playing y Error según el resultado del reproductor.
+  showPlayerState('error', 'Playback is not implemented yet.');
+}
+async function loadChannel() {
+  if (!channelId) { showPlayerState('error', 'Choose a channel from Home.'); return; }
+
+  // TODO 5:
+  // Consulta GET /api/channels/:id y asigna la respuesta a `channel`.
+  // TODO 6: muestra nombre, país y categorías antes de cargar favoritos y reproducir.
+  showPlayerState('error', 'Channel loading is not implemented yet.');
+}
+favoriteButton.addEventListener('click', toggleFavorite); retryButton.addEventListener('click', playChannel);
+if (channelId) reportProblemLink.href = `/reports.html?${new URLSearchParams({ channelId })}`;
+document.querySelector('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; });
+async function start() { if (await loadUser()) await loadChannel(); } start();
+</file>
+
+<file path="src/public/favorites.html">
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Hub Favorites</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+</head>
+
+<body class="app-body">
+    <main class="app-shell">
+        <aside class="sidebar"><a class="brand" href="/">TV<span>HUB</span></a>
+            <nav aria-label="Main navigation"><a class="nav-link" href="/">⌂ <span>Home</span></a><a
+                    class="nav-link active" href="/favorites.html">☆ <span>Favorites</span></a><a
+                    class="nav-link" href="/reports.html">⚐ <span>Reports</span></a></nav>
+            <div class="sidebar-note">
+                <p class="eyebrow">YOUR LIBRARY</p>
+                <p>Your saved live channels in one place.</p>
+            </div>
+        </aside>
+        <section class="content">
+            <header class="topbar"><label class="search-box" for="favorite-search"><span>⌕</span><input
+                        id="favorite-search" type="search" placeholder="Search favorites" /></label>
+                <div class="account">
+                    <p id="welcome">Loading your session…</p><button id="logout" class="logout-button">Log out</button>
+                </div>
+            </header>
+            <section class="page-hero">
+                <p class="eyebrow">YOUR LIBRARY</p>
+                <h1>Favorites</h1>
+                <p>Return to the live channels you saved.</p>
+            </section>
+            <section class="browse-section">
+                <div class="section-heading">
+                    <h2>Saved channels</h2>
+                    <p id="favorites-status">Loading favorites…</p>
+                </div><label class="filter-control" for="favorite-sort">Sort <select id="favorite-sort">
+                        <option value="newest">Newest first</option>
+                        <option value="name">Name A-Z</option>
+                    </select></label>
+                <div id="favorites-list" class="channel-grid"></div>
+            </section>
+        </section>
+    </main>
+    <script src="/js/favorites.js"></script>
+</body>
+
+</html>
+</file>
+
+<file path="src/routes/favorite.routes.ts">
+import { Router } from 'express';
+import { addFavorite, listFavorites, removeFavorite } from '../controllers/favorite.controller.js';
+import { authenticate } from '../middleware/authenticate.middleware.js';
+
+export const favoriteRouter = Router();
+
+favoriteRouter.get('/', authenticate, listFavorites);
+favoriteRouter.post('/:channelId', authenticate, addFavorite);
+favoriteRouter.delete('/:channelId', authenticate, removeFavorite);
+</file>
+
+<file path="tests/channels.test.ts">
+import request from 'supertest';
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { app } from '../src/app.js';
+import { Channel } from '../src/models/channel.model.js';
+
+let mongo: MongoMemoryServer;
+
+beforeAll(async () => {
+  mongo = await MongoMemoryServer.create();
+  await mongoose.connect(mongo.getUri());
+});
+
+beforeEach(async () => {
+  await Channel.deleteMany({});
+  await Channel.insertMany([
+    { name: 'Noticias Aula', logoUrl: 'https://example.com/news.png', streamUrl: 'https://example.com/news.m3u8', country: 'Mexico', categories: ['News'], isActive: true },
+    { name: 'Cine Aula', logoUrl: 'https://example.com/movies.png', streamUrl: 'https://example.com/movies.m3u8', country: 'Spain', categories: ['Movies'], isActive: true },
+    { name: 'Hidden Channel', logoUrl: 'https://example.com/hidden.png', streamUrl: 'https://example.com/hidden.m3u8', country: 'Mexico', categories: ['News'], isActive: false }
+  ]);
+});
+
+afterAll(async () => {
+  await mongoose.disconnect();
+  await mongo.stop();
+});
+
+test('GET /api/channels returns active channels', async () => {
+  const response = await request(app).get('/api/channels').expect(200);
+
+  expect(response.body.channels).toHaveLength(2);
+  expect(response.body.channels[0]).toEqual(expect.objectContaining({ name: expect.any(String) }));
+});
+
+test('GET /api/channels searches by name', async () => {
+  const response = await request(app).get('/api/channels?search=cine').expect(200);
+
+  expect(response.body.channels).toHaveLength(1);
+  expect(response.body.channels[0].name).toBe('Cine Aula');
+});
+
+test('GET /api/channels/:id returns one active channel', async () => {
+  const channel = await Channel.findOne({ name: 'Noticias Aula' });
+  const response = await request(app).get(`/api/channels/${channel?.id}`).expect(200);
+
+  expect(response.body.channel).toEqual(expect.objectContaining({ name: 'Noticias Aula' }));
+});
+
+test('GET /api/channels/:id returns the existing error for an unavailable channel', async () => {
+  await request(app)
+    .get('/api/channels/507f1f77bcf86cd799439011')
+    .expect(404, { error: { code: 'CHANNEL_NOT_FOUND', message: 'Channel was not found' } });
+});
+</file>
+
+<file path="src/scripts/import-m3u.ts">
+import { readFile } from 'node:fs/promises';
+import { connectDatabase, disconnectDatabase } from '../config/database.js';
+import { Channel } from '../models/channel.model.js';
+import { parseM3u } from '../utils/m3u-parser.js';
+
+async function importPlaylist(): Promise<void> {
+  const [filePath, country] = process.argv.slice(2);
+
+  if (!filePath || !country) {
+    throw new Error('Usage: npm run import:channels -- <playlist-file> <country>');
+  }
+
+  const playlist = await readFile(filePath, 'utf8');
+  const channels = parseM3u(playlist, country);
+
+  if (channels.length === 0) throw new Error('The playlist did not contain channels with name and stream URL');
+
+  await connectDatabase();
+
+  let created = 0;
+  let updated = 0;
+
+  for (const channel of channels) {
+    const identity = channel.tvgId
+      ? { country: channel.country, tvgId: channel.tvgId }
+      : { country: channel.country, streamUrl: channel.streamUrl };
+    const existingChannel = await Channel.findOne(identity);
+
+    await Channel.findOneAndUpdate(identity, channel, { upsert: true, new: true, runValidators: true });
+    if (existingChannel) updated += 1;
+    else created += 1;
+  }
+
+  console.log(`${channels.length} channels from ${country.trim()} processed: ${created} created, ${updated} updated.`);
+  await disconnectDatabase();
+}
+
+importPlaylist().catch(async (error: unknown) => {
+  console.error('Could not import M3U playlist:', error);
+  await disconnectDatabase();
+  process.exit(1);
+});
+</file>
+
+<file path="src/utils/m3u-parser.ts">
+export type ImportedChannel = {
+  name: string;
+  logoUrl: string;
+  streamUrl: string;
+  country: string;
+  categories: string[];
+  isActive: boolean;
+  tvgId?: string;
+  streamType?: 'hls' | 'dash';
+  httpReferrer?: string;
+  httpUserAgent?: string;
+};
+
+type ChannelInfo = {
+  name: string;
+  logoUrl: string;
+  categories: string[];
+  isActive: boolean;
+  tvgId?: string;
+  httpReferrer?: string;
+  httpUserAgent?: string;
+};
+
+const fallbackLogoUrl = '/images/channel-placeholder.svg';
+
+function readAttributes(line: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const attributePattern = /([\w-]+)="([^"]*)"/g;
+
+  for (const match of line.matchAll(attributePattern)) {
+    attributes[match[1]] = match[2];
+  }
+
+  return attributes;
+}
+
+function readChannelInfo(line: string): ChannelInfo | undefined {
+  // The final comma separates M3U attributes from the visible channel name.
+  const nameSeparator = line.lastIndexOf(',');
+  if (nameSeparator === -1) return undefined;
+
+  const attributes = readAttributes(line);
+  const name = line.slice(nameSeparator + 1).trim();
+  const categoryText = attributes['group-title'] ?? '';
+  const categories = categoryText ? categoryText.split(';').map((category) => category.trim()).filter(Boolean) : [];
+
+  if (!name) return undefined;
+
+  return {
+    name,
+    logoUrl: attributes['tvg-logo'] || fallbackLogoUrl,
+    categories,
+    // We trust this explicit label from the playlist without making network requests.
+    isActive: !name.includes('[Geo-blocked]'),
+    tvgId: attributes['tvg-id'] || undefined,
+    httpReferrer: attributes['http-referrer'] || undefined,
+    httpUserAgent: attributes['http-user-agent'] || undefined
+  };
+}
+
+function isStreamUrl(line: string): boolean {
+  return line.startsWith('http://') || line.startsWith('https://');
+}
+
+function readStreamType(streamUrl: string): 'hls' | 'dash' | undefined {
+  const path = streamUrl.split('?')[0].toLowerCase();
+  if (path.endsWith('.m3u8')) return 'hls';
+  if (path.endsWith('.mpd')) return 'dash';
+  return undefined;
+}
+
+function readOption(line: string, optionName: string): string | undefined {
+  const prefix = `#EXTVLCOPT:${optionName}=`;
+  return line.startsWith(prefix) ? line.slice(prefix.length).trim() || undefined : undefined;
+}
+
+// Reads the common #EXTINF + URL M3U format used by the local playlists.
+export function parseM3u(playlist: string, country: string): ImportedChannel[] {
+  const cleanCountry = country.trim();
+  if (!cleanCountry) throw new Error('Country is required to import a playlist');
+
+  const channels: ImportedChannel[] = [];
+  let pendingChannel: ChannelInfo | undefined;
+
+  for (const rawLine of playlist.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    if (line.startsWith('#EXTINF:')) {
+      pendingChannel = readChannelInfo(line);
+      continue;
+    }
+
+    if (pendingChannel) {
+      pendingChannel.httpReferrer ??= readOption(line, 'http-referrer');
+      pendingChannel.httpUserAgent ??= readOption(line, 'http-user-agent');
+    }
+
+    if (!isStreamUrl(line)) continue;
+
+    if (pendingChannel) {
+      channels.push({
+        ...pendingChannel,
+        streamUrl: line,
+        streamType: readStreamType(line),
+        country: cleanCountry
+      });
+    }
+
+    pendingChannel = undefined;
+  }
+
+  return channels;
+}
+</file>
+
+<file path="tests/m3u-parser.test.ts">
+import { parseM3u } from '../src/utils/m3u-parser.js';
+
+const playlist = `#EXTM3U
+#EXTINF:-1 tvg-id="news.ar" tvg-logo="https://example.com/news.png" group-title="News;General",News Argentina
+#EXTVLCOPT:http-user-agent=Example Browser
+https://example.com/news/playlist.m3u8
+#EXTINF:-1 tvg-logo="https://example.com/blocked.png" group-title="Movies",Movie [Geo-blocked]
+http://example.com/movie/playlist.m3u8
+#EXTINF:-1 tvg-logo="https://example.com/missing-url.png" group-title="Music",Missing URL`;
+
+test('parses channels and ignores M3U option lines between metadata and URL', () => {
+  const channels = parseM3u(playlist, 'Argentina');
+
+  expect(channels).toHaveLength(2);
+  expect(channels[0]).toEqual(expect.objectContaining({
+    name: 'News Argentina',
+    logoUrl: 'https://example.com/news.png',
+    streamUrl: 'https://example.com/news/playlist.m3u8',
+    country: 'Argentina',
+    categories: ['News', 'General'],
+    isActive: true,
+    tvgId: 'news.ar',
+    streamType: 'hls',
+    httpUserAgent: 'Example Browser'
+  }));
+  expect(channels[1]).toEqual(expect.objectContaining({ isActive: false }));
+});
+
+test('requires a country for imported channels', () => {
+  expect(() => parseM3u(playlist, '   ')).toThrow('Country is required');
+});
+</file>
+
+<file path="src/routes/channel.routes.ts">
+import { Router, type RequestHandler } from 'express';
+import { getChannel, listChannels } from '../controllers/channel.controller.js';
+
+export const channelRouter = Router();
+
+const getChannelNotImplemented: RequestHandler = (_request, response) => {
+  response.status(501).json({
+    error: {
+      code: 'CHANNEL_WATCH_NOT_IMPLEMENTED',
+      message: 'Watching individual channels is not implemented yet'
+    }
+  });
+};
+
+channelRouter.get('/', listChannels);
+// TODO 1:
+// Completa el Controller que debe atender esta ruta.
+// Objetivo: conectar GET /api/channels/:id con la lógica que recupera un solo Channel.
+// Resultado esperado: Express debe ejecutar el Controller correcto cuando se solicita un canal por id.
+channelRouter.get('/:id', getChannelNotImplemented);
+</file>
+
+<file path="src/app.ts">
+import cookieParser from 'cookie-parser';
+import express from 'express';
+import helmet from 'helmet';
+import path from 'node:path';
+import { healthRouter } from './routes/health.routes.js';
+import { authRouter } from './routes/auth.routes.js';
+import { channelRouter } from './routes/channel.routes.js';
+import { favoriteRouter } from './routes/favorite.routes.js';
+import { reportRouter } from './routes/report.routes.js';
+import { adminRouter, userRouter } from './routes/user.routes.js';
+import { errorHandler, notFound } from './middleware/error.middleware.js';
+
+const publicFolder = process.env.NODE_ENV === 'production' ? 'dist/public' : 'src/public';
+const publicDirectory = path.join(process.cwd(), publicFolder);
+
+export const app = express();
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json());
+app.use(cookieParser());
+
+app.use(healthRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/channels', channelRouter);
+app.use('/api/favorites', favoriteRouter);
+app.use('/api/reports', reportRouter);
+app.use('/api/users', userRouter);
+app.use('/api/admin', adminRouter);
+
+app.get('/', (_request, response) => response.sendFile(path.join(publicDirectory, 'index.html')));
+app.get('/login', (_request, response) => response.sendFile(path.join(publicDirectory, 'login.html')));
+app.get('/register', (_request, response) => response.sendFile(path.join(publicDirectory, 'register.html')));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use(express.static(publicDirectory));
+
+app.use(notFound);
+app.use(errorHandler);
+</file>
+
+<file path="package.json">
+{
+  "name": "tv-hub",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc && node -e \"require('fs').cpSync('src/public','dist/public',{recursive:true})\"",
+    "start": "node dist/server.js",
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch",
+    "import:channels": "node dist/scripts/import-m3u.js",
+    "import:all-channels": "node dist/scripts/import-all-m3u.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.18.1",
+    "multer": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.9",
+    "@types/express": "^5.0.3",
+    "@types/jest": "^30.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.2.0",
+    "@types/supertest": "^6.0.3",
+    "jest": "^30.1.3",
+    "mongodb-memory-server": "^10.2.1",
+    "supertest": "^7.1.4",
+    "ts-jest": "^29.4.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
+</file>
+
+<file path="src/controllers/channel.controller.ts">
+import type { RequestHandler } from 'express';
+import { isValidObjectId } from 'mongoose';
+import { Channel } from '../models/channel.model.js';
+import { AppError } from '../utils/app-error.js';
+
+function readQueryValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function escapeRegularExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export const listChannels: RequestHandler = async (request, response) => {
+  const search = readQueryValue(request.query.search);
+  const category = readQueryValue(request.query.category);
+  const country = readQueryValue(request.query.country);
+  const requestedSort = readQueryValue(request.query.sort);
+
+  // Start by showing only channels that are available to viewers.
+  const filter: Record<string, unknown> = { isActive: true };
+
+  if (search) {
+    const searchExpression = new RegExp(escapeRegularExpression(search), 'i');
+    filter.$or = [
+      { name: searchExpression },
+      { country: searchExpression },
+      { categories: searchExpression }
+    ];
+  }
+
+  if (category) {
+    filter.categories = new RegExp(escapeRegularExpression(category), 'i');
+  }
+
+  if (country) {
+    filter.country = new RegExp(`^${escapeRegularExpression(country)}$`, 'i');
+  }
+
+  // Only allow the two simple sorts that we want to explain in this version.
+  const sort = requestedSort === 'country' ? 'country name' : 'name';
+  const channels = await Channel.find(filter).sort(sort);
+
+  response.json({ channels });
+};
+
+export const getChannel: RequestHandler = async (request, response) => {
+  const channelId = request.params.id;
+
+  if (!isValidObjectId(channelId)) {
+    throw new AppError(400, 'INVALID_CHANNEL_ID', 'Channel id is invalid');
+  }
+
+  // TODO 2, 3 y 4:
+  // Buscar el canal activo, responder 404 si no existe y devolverlo como JSON.
+  // Mientras el ejercicio está pendiente, mantenemos una respuesta explícita y válida.
+  response.status(501).json({
+    error: {
+      code: 'CHANNEL_WATCH_NOT_IMPLEMENTED',
+      message: `Watching channel ${channelId} is not implemented yet`
+    }
+  });
+};
+</file>
+
+<file path="src/public/css/styles.css">
+:root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f4f7fb; }
+html, body { width: 100%; min-width: 100%; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+body:not(.app-body) main { width: min(92vw, 620px); background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 8px 30px #1720331a; }
+body:not(.app-body) h1 { margin-top: 0; }
+form { display: grid; gap: .8rem; }
+input, button { padding: .75rem; font: inherit; }
+button { cursor: pointer; background: #155eef; color: white; border: 0; border-radius: 6px; }
+button:disabled, input:disabled { cursor: not-allowed; opacity: .65; }
+.error { color: #b42318; min-height: 1.3em; }
+
+.auth-body { display: block; min-height: 100vh; background: #020817; color: #e8f1ff; }
+body.auth-body main.auth-layout { width: 100%; padding: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.auth-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(390px, .85fr); width: 100%; min-height: 100vh; }
+.auth-intro { display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; padding: clamp(2rem, 5vw, 5rem); background: radial-gradient(circle at 75% 15%, #155eef 0, #0b2e65 28%, #020817 68%); }
+.auth-intro .brand { margin: 0; }
+.auth-intro h1 { max-width: 710px; margin: .7rem 0 1.2rem; color: #f8fbff; font-size: clamp(3rem, 6vw, 6.3rem); line-height: .92; letter-spacing: -.075em; }
+.auth-intro div > p:last-child { max-width: 470px; margin: 0; color: #b9cff0; font-size: 1.08rem; line-height: 1.6; }
+.auth-panel { display: grid; place-items: center; box-sizing: border-box; padding: 2rem; background: #06142e; }
+.auth-card { width: min(100%, 390px); }
+.auth-card h2 { margin: .55rem 0 .35rem; color: #f8fbff; font-size: 2rem; letter-spacing: -.045em; }
+.auth-copy { margin: 0 0 2rem; color: #a9c4eb; }
+.auth-card form { gap: 1rem; }
+.auth-card label { display: grid; gap: .45rem; color: #d8e8ff; font-size: .84rem; font-weight: 750; }
+.auth-card input { box-sizing: border-box; width: 100%; border: 1px solid #305687; border-radius: .5rem; outline: 0; background: #0c2348; color: #f8fbff; }
+.auth-card input:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px #38bdf833; }
+.auth-submit { margin-top: .4rem; border-radius: .5rem; background: #155eef; font-weight: 800; }
+.auth-submit:hover { background: #2a75f3; }
+.auth-card .error { margin: 0; color: #fda4af; }
+.auth-switch { margin: 1.5rem 0 0; color: #a9c4eb; font-size: .9rem; }
+.auth-switch a { color: #7dd3fc; font-weight: 800; text-decoration: none; }
+.auth-switch a:hover { color: #f8fbff; }
+
+.app-body { display: block; min-height: 100vh; overflow-x: hidden; background: #020817; color: #e8f1ff; }
+.app-shell { box-sizing: border-box; width: 100%; min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); background: #020817; }
+.sidebar { position: sticky; top: 0; align-self: start; min-height: 100vh; box-sizing: border-box; padding: 2rem 1.25rem; background: #06142e; border-right: 1px solid #18345f; }
+.brand { display: block; margin: 0 .75rem 2.75rem; color: #f8fbff; text-decoration: none; font-size: 1.45rem; font-weight: 850; letter-spacing: -.08em; }
+.brand span { color: #38bdf8; }
+.sidebar nav { display: grid; gap: .35rem; }
+.nav-link { display: flex; gap: .8rem; align-items: center; border-radius: .55rem; padding: .75rem; color: #97acd0; text-decoration: none; font-weight: 700; }
+.nav-link:hover, .nav-link.active { color: #f8fbff; background: #12366b; }
+.sidebar-note { margin: 2rem .75rem; padding-top: 1.5rem; border-top: 1px solid #18345f; color: #8ea7ce; font-size: .82rem; line-height: 1.55; }
+.eyebrow { margin: 0; color: #38bdf8; font-size: .68rem; font-weight: 850; letter-spacing: .15em; }
+.content { min-width: 0; padding: 1.35rem clamp(1.25rem, 4vw, 4rem) 3.5rem; background: radial-gradient(circle at 70% -15%, #134f9e 0, #061a3c 33%, #020817 67%); }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.search-box { display: flex; align-items: center; gap: .65rem; width: min(420px, 60vw); padding: 0 .95rem; border: 1px solid #305687; border-radius: 999px; background: #eaf4ff; color: #12366b; }
+.search-box input { width: 100%; padding: .72rem 0; border: 0; outline: 0; background: transparent; color: #102a53; }
+.account { display: flex; align-items: center; gap: .75rem; }
+.account p { max-width: 240px; margin: 0; overflow: hidden; color: #d8e8ff; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.logout-button { padding: .6rem .85rem; border: 1px solid #416d9f; background: transparent; color: #e8f1ff; font-size: .78rem; font-weight: 700; }
+.logout-button:hover { background: #12366b; }
+.hero { padding: clamp(3rem, 8vw, 6.5rem) 0 3rem; }
+.hero h1 { max-width: 720px; margin: .65rem 0 1rem; color: #f8fbff; font-size: clamp(2.8rem, 6.2vw, 5.5rem); line-height: .94; letter-spacing: -.075em; }
+.hero > p:last-child { max-width: 420px; margin: 0; color: #a9c4eb; font-size: 1.05rem; }
+.browse-section { margin-top: 1rem; }
+.section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+.section-heading h2, .category-section h2 { margin: .3rem 0 0; color: #f8fbff; font-size: 1.55rem; letter-spacing: -.04em; }
+#channel-status { margin: 0; color: #94b1d8; font-size: .8rem; }
+.category-section { margin-top: 2.6rem; }
+.channel-row, .search-results { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(155px, 180px); gap: 1rem; overflow-x: auto; padding: 1rem .1rem 1.15rem; scrollbar-color: #2d6eb4 transparent; }
+.search-results { grid-auto-flow: initial; grid-template-columns: repeat(auto-fill, minmax(155px, 180px)); }
+.channel-card { min-width: 0; overflow: hidden; border: 1px solid transparent; border-radius: .7rem; background: #0c2348; box-shadow: 0 12px 22px #00000029; transition: transform .2s ease, background .2s ease, border-color .2s ease; }
+.channel-card:hover { transform: translateY(-5px); border-color: #38bdf8; background: #12366b; }
+.channel-card-header { display: flex; align-items: start; justify-content: space-between; gap: .35rem; }
+.channel-logo { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #163b6b; }
+.channel-card h3 { margin: .9rem .85rem .25rem; overflow: hidden; color: #f8fbff; font-size: .92rem; text-overflow: ellipsis; white-space: nowrap; }
+.favorite-button { margin: .55rem .55rem 0 0; padding: .25rem; border: 0; border-radius: 50%; background: transparent; color: #38bdf8; font-size: 1.25rem; line-height: 1; }
+.favorite-button:hover { background: #38bdf833; }
+.channel-card p { margin: 0 .85rem .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-country { color: #abc4e6; font-size: .76rem; }
+.channel-categories { color: #38bdf8; font-size: .7rem; font-weight: 700; }
+.channel-card:focus-visible, .view-all-link:focus-visible { outline: 2px solid #38bdf8; outline-offset: 3px; }
+.country-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.view-all-link, .back-link { color: #7dd3fc; font-weight: 750; text-decoration: none; }
+.view-all-link:hover, .back-link:hover { color: #f8fbff; }
+.filter-control { display: inline-flex; align-items: center; gap: .65rem; margin: 0 0 .5rem; color: #b9cff0; font-size: .85rem; font-weight: 700; }
+.filter-control select { padding: .55rem .7rem; border: 1px solid #305687; border-radius: .45rem; background: #0c2348; color: #f8fbff; font: inherit; }
+.channel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 180px)); gap: 1rem; padding: 1rem 0; }
+.empty-state { margin: 2rem 0; color: #a9c4eb; }
+.page-hero { padding: 3rem 0 2rem; }
+.page-hero h1 { margin: .5rem 0; color: #f8fbff; font-size: clamp(2.5rem, 5vw, 4.5rem); letter-spacing: -.06em; }
+.page-hero > p:last-child { color: #a9c4eb; }
+.watch-layout { max-width: 1080px; margin: 2.5rem auto; }
+.player-shell { position: relative; display: grid; place-items: center; min-height: min(58vw, 610px); overflow: hidden; border: 1px solid #305687; border-radius: .85rem; background: #000; }
+.video-player { width: 100%; max-height: 610px; background: #000; }
+.player-status { color: #d8e8ff; }
+.player-status[data-state="error"] { color: #fda4af; }
+.retry-button, .watch-favorite { padding: .7rem 1rem; border-radius: .5rem; background: #155eef; color: white; font-weight: 750; }
+.channel-details { display: flex; align-items: center; gap: 1.25rem; margin-top: 1.5rem; padding: 1.25rem; border-radius: .75rem; background: #0c2348; }
+.detail-logo { width: 130px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: .45rem; background: #163b6b; }
+.channel-details h1 { margin: .3rem 0; color: #f8fbff; font-size: 1.8rem; }
+.channel-details p { margin: .25rem 0; color: #abc4e6; }
+.channel-details .channel-categories { color: #38bdf8; }
+.watch-favorite { margin-top: .8rem; }
+.channel-card-actions { display: flex; align-items: center; gap: .35rem; }
+.report-button { padding: .35rem .5rem; border: 1px solid #416d9f; border-radius: .4rem; background: transparent; color: #b9cff0; font: inherit; font-size: .72rem; font-weight: 750; cursor: pointer; }
+.report-button:hover { border-color: #38bdf8; background: #12366b; color: #f8fbff; }
+.watch-report { display: inline-block; margin: .8rem 0 0 .5rem; padding: .7rem 1rem; border: 1px solid #416d9f; border-radius: .5rem; color: #b9cff0; font-size: .85rem; font-weight: 750; text-decoration: none; }
+.watch-report:hover { border-color: #38bdf8; background: #12366b; color: #f8fbff; }
+.report-panel { max-width: 680px; margin: 0 0 2.5rem; padding: 1.35rem; border: 1px solid #305687; border-radius: .75rem; background: #0c2348; }
+.report-panel h2 { margin: 0; color: #f8fbff; }
+.report-panel > p { color: #a9c4eb; }
+.report-panel label { display: grid; gap: .45rem; color: #d8e8ff; font-size: .85rem; font-weight: 700; }
+.report-panel input, .report-panel select, .report-panel textarea { box-sizing: border-box; width: 100%; padding: .7rem; border: 1px solid #305687; border-radius: .45rem; background: #061a3c; color: #f8fbff; font: inherit; }
+.report-panel textarea { min-height: 110px; resize: vertical; }
+.form-status { min-height: 1.2rem; margin: 0; color: #7dd3fc; font-size: .85rem; }
+.reports-list { display: grid; gap: 1rem; }
+.report-item { padding: 1rem 1.15rem; border: 1px solid #305687; border-radius: .7rem; background: #0c2348; }
+.report-item h3 { margin: 0 0 .6rem; color: #f8fbff; }
+.report-item p { margin: .35rem 0; color: #b9cff0; }
+.report-item .report-status { display: inline-block; padding: .15rem .45rem; border-radius: 999px; background: #155eef33; color: #7dd3fc; font-size: .72rem; font-weight: 800; }
+.report-item .report-date { color: #8ea7ce; font-size: .78rem; }
+.report-item a { color: #7dd3fc; font-weight: 700; }
+
+@media (max-width: 760px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; min-height: auto; padding: 1rem; border-right: 0; border-bottom: 1px solid #18345f; }
+  .brand { margin: 0 0 1rem; }
+  .sidebar nav { grid-template-columns: repeat(3, 1fr); }
+  .nav-link { justify-content: center; padding: .55rem; font-size: .75rem; }
+  .sidebar-note { display: none; }
+  .content { padding: 1rem 1.25rem 2.5rem; }
+  .topbar { align-items: stretch; flex-direction: column-reverse; }
+  .search-box { width: auto; }
+  .account { justify-content: space-between; }
+  .hero { padding-top: 3.5rem; }
+  .channel-row { grid-auto-columns: minmax(145px, 165px); }
+  .channel-details { align-items: start; flex-direction: column; }
+  .auth-layout { grid-template-columns: 1fr; }
+  .auth-intro { min-height: 320px; padding: 1.5rem; }
+  .auth-intro h1 { max-width: 500px; font-size: clamp(2.7rem, 13vw, 4.5rem); }
+  .auth-panel { padding: 2.5rem 1.5rem; }
+}
+</file>
+
+<file path="src/public/index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Hub</title>
+    <link rel="stylesheet" href="/css/styles.css" />
+  </head>
+  <body class="app-body">
+    <main class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/">TV<span>HUB</span></a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link active" href="/">⌂ <span>Home</span></a>
+          <a class="nav-link" href="#browse">▦ <span>Browse channels</span></a>
+          <a class="nav-link" href="/favorites.html">☆ <span>Favorites</span></a>
+          <a class="nav-link" href="/reports.html">⚐ <span>Reports</span></a>
+        </nav>
+        <div class="sidebar-note">
+          <p class="eyebrow">LIVE TV</p>
+          <p>Discover live channels from countries around the world.</p>
+        </div>
+      </aside>
+      <section class="content">
+        <header class="topbar">
+          <label class="search-box" for="channel-search"><span>⌕</span><input id="channel-search" type="search" placeholder="Search live channels" /></label>
+          <div class="account"><p id="welcome">Loading your session…</p><button id="logout" class="logout-button">Log out</button></div>
+        </header>
+        <section class="hero">
+          <p class="eyebrow">LIVE TELEVISION</p>
+          <h1>Find a channel<br />for every moment.</h1>
+          <p>Browse live channels by country and choose what to watch.</p>
+        </section>
+        <section id="browse" class="browse-section">
+          <div class="section-heading">
+            <div><p class="eyebrow">LIVE CHANNELS</p><h2>Browse by country</h2></div>
+            <p id="channel-status">Loading channels…</p>
+          </div>
+          <label class="filter-control" for="category-filter">Category <select id="category-filter"><option value="">All categories</option></select></label>
+          <div id="channel-list"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/js/home.js"></script>
+  </body>
+</html>
+</file>
+
+<file path=".gitignore">
+node_modules/
+dist/
+docs/
+!docs/
+docs/*
+docs/AGENTS.md
+docs/estado-del-proyecto.md
+docs/requerimientos-v1.md
+docs/session-10-student-checkpoints.md
+docs/session-11-m3u-import.md
+docs/session-12-student-checkpoints.md
+docs/v4-context.md
+docs/practica-integradora-1-student-starter.md
+!docs/tv-hub-v5-channel-reports.md
+!docs/argentina_playlist.m3u
+!docs/canada_playlist.m3u
+!docs/japon_playlist.m3u
+!docs/mexico_playlist.m3u
+!docs/usa_playlist.m3u
+.env
+coverage/
+uploads/*
+!uploads/reports/
+uploads/reports/*
+!uploads/reports/.gitkeep
+</file>
+
+<file path="src/public/js/home.js">
+const channelList = document.querySelector('#channel-list');
+const channelStatus = document.querySelector('#channel-status');
+const searchInput = document.querySelector('#channel-search');
+const categoryFilter = document.querySelector('#category-filter');
+let favoriteChannelIds = new Set();
+let categoryNames = [];
+
+async function loadUser() {
+  const response = await fetch('/api/users/me');
+  if (!response.ok) { location.href = '/login'; return false; }
+  const user = await response.json();
+  document.querySelector('#welcome').textContent = `Welcome, ${user.email}`;
+  return true;
+}
+
+async function loadFavorites() {
+  const response = await fetch('/api/favorites');
+  if (!response.ok) return;
+  const { favorites } = await response.json();
+  favoriteChannelIds = new Set(favorites.filter((favorite) => favorite.channelId).map((favorite) => favorite.channelId._id));
+}
+
+async function toggleFavorite(channelId) {
+  const isFavorite = favoriteChannelIds.has(channelId);
+  const response = await fetch(`/api/favorites/${channelId}`, { method: isFavorite ? 'DELETE' : 'POST' });
+  if (!response.ok) { channelStatus.textContent = 'Could not update favorites.'; return; }
+  if (isFavorite) favoriteChannelIds.delete(channelId);
+  else favoriteChannelIds.add(channelId);
+  loadChannels();
+}
+
+function openChannel(channelId) {
+  location.href = `/watch.html?${new URLSearchParams({ channelId })}`;
+}
+
+function reportChannel(channelId) {
+  location.href = `/reports.html?${new URLSearchParams({ channelId })}`;
+}
+
+function createChannelCard(channel) {
+  const card = document.createElement('article');
+  card.className = 'channel-card';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'link');
+  card.addEventListener('click', () => openChannel(channel._id));
+  card.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') openChannel(channel._id);
+  });
+
+  const logo = document.createElement('img');
+  logo.src = channel.logoUrl || '/images/channel-placeholder.svg';
+  logo.alt = `${channel.name} logo`;
+  logo.className = 'channel-logo';
+  logo.addEventListener('error', () => { logo.src = '/images/channel-placeholder.svg'; });
+  const name = document.createElement('h3');
+  name.textContent = channel.name;
+  const favoriteButton = document.createElement('button');
+  const isFavorite = favoriteChannelIds.has(channel._id);
+  favoriteButton.type = 'button';
+  favoriteButton.className = 'favorite-button';
+  favoriteButton.textContent = isFavorite ? '★' : '☆';
+  favoriteButton.setAttribute('aria-label', isFavorite ? `Remove ${channel.name} from favorites` : `Add ${channel.name} to favorites`);
+  favoriteButton.addEventListener('click', (event) => { event.stopPropagation(); toggleFavorite(channel._id); });
+  const reportButton = document.createElement('button');
+  reportButton.type = 'button';
+  reportButton.className = 'report-button';
+  reportButton.textContent = 'Report problem';
+  reportButton.setAttribute('aria-label', `Report a problem with ${channel.name}`);
+  reportButton.addEventListener('click', (event) => { event.stopPropagation(); reportChannel(channel._id); });
+  const header = document.createElement('div');
+  header.className = 'channel-card-header';
+  const actions = document.createElement('div');
+  actions.className = 'channel-card-actions';
+  actions.append(favoriteButton, reportButton);
+  header.append(name, actions);
+  const country = document.createElement('p');
+  country.className = 'channel-country';
+  country.textContent = channel.country;
+  const categories = document.createElement('p');
+  categories.className = 'channel-categories';
+  categories.textContent = channel.categories.join(', ') || 'Live TV';
+  card.append(logo, header, country, categories);
+  return card;
+}
+
+function createCountrySection(country, channels) {
+  const section = document.createElement('section');
+  section.className = 'category-section';
+  const header = document.createElement('div');
+  header.className = 'country-heading';
+  const heading = document.createElement('h2');
+  heading.textContent = country;
+  const viewAll = document.createElement('a');
+  viewAll.className = 'view-all-link';
+  viewAll.href = `/country.html?${new URLSearchParams({ country })}`;
+  viewAll.textContent = 'View all';
+  header.append(heading, viewAll);
+  const row = document.createElement('div');
+  row.className = 'channel-row';
+  row.append(...channels.slice(0, 5).map(createChannelCard));
+  section.append(header, row);
+  return section;
+}
+
+function updateCategoryFilter(channels) {
+  // Keep the full initial list visible while a category filter is active.
+  if (categoryFilter.value) return;
+  const names = [...new Set(channels.flatMap((channel) => channel.categories))].sort();
+  if (names.join('|') === categoryNames.join('|')) return;
+  categoryNames = names;
+  const selectedCategory = categoryFilter.value;
+  categoryFilter.replaceChildren(new Option('All categories', ''), ...names.map((name) => new Option(name, name)));
+  categoryFilter.value = selectedCategory;
+}
+
+function displayChannels(channels) {
+  if (channels.length === 0) {
+    channelList.replaceChildren(Object.assign(document.createElement('p'), { className: 'empty-state', textContent: 'No channels found.' }));
+    return;
+  }
+  const byCountry = new Map();
+  for (const channel of channels) {
+    const countryChannels = byCountry.get(channel.country) || [];
+    countryChannels.push(channel);
+    byCountry.set(channel.country, countryChannels);
+  }
+  channelList.replaceChildren(...[...byCountry.entries()].map(([country, countryChannels]) => createCountrySection(country, countryChannels)));
+}
+
+async function loadChannels() {
+  channelStatus.textContent = 'Loading live channels…';
+  const query = new URLSearchParams();
+  if (searchInput.value.trim()) query.set('search', searchInput.value.trim());
+  if (categoryFilter.value) query.set('category', categoryFilter.value);
+  const response = await fetch(`/api/channels${query.size ? `?${query}` : ''}`);
+  if (!response.ok) { channelStatus.textContent = 'Could not load channels.'; return; }
+  const { channels } = await response.json();
+  updateCategoryFilter(channels);
+  channelStatus.textContent = `${channels.length} live channel${channels.length === 1 ? '' : 's'}`;
+  displayChannels(channels);
+}
+
+searchInput.addEventListener('input', loadChannels);
+categoryFilter.addEventListener('change', loadChannels);
+document.querySelector('#logout').addEventListener('click', async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; });
+
+async function start() {
+  if (!await loadUser()) return;
+  await loadFavorites();
+  await loadChannels();
+}
+
+start();
+</file>
+
+<file path="README.md">
+# TV Hub V4, Student Starter, Práctica Integradora 1
+
+Proyecto de clase con Node.js, Express, TypeScript, MongoDB y Mongoose. Esta es la base estudiantil de TV Hub V4 para completar el flujo MVC de Watch sin cambiar la arquitectura existente.
+
+## Práctica Integradora 1
+
+- El registro, login, refresh y logout de V1 siguen funcionando.
+- `Channel` es un modelo de Mongoose alimentado por playlists M3U locales.
+- `GET /api/channels` devuelve los canales activos; acepta `search`, `category`, `country` y `sort=country` de forma opcional.
+- La página Home usa `fetch('/api/channels')` y muestra tarjetas con logo, nombre, país y categorías.
+- Home agrupa canales por país, muestra hasta cinco por país y permite filtrar por categoría.
+- Favorites permite buscar y ordenar canales guardados; Country muestra todos los canales de un país.
+- Watch obtiene un canal por HTTP y usa Shaka Player para intentar reproducción HLS y DASH.
+- Watch contiene ocho TODOs guiados. Consulte `docs/practica-integradora-1-student-starter.md`.
+- Favorites está completo: permite crear, consultar y quitar favoritos, con estado visual sincronizado en Home y My Favorites.
+- Los ejercicios guiados están en `docs/session-10-student-checkpoints.md`.
+- Los ejercicios de Favorites están en `docs/session-12-student-checkpoints.md`.
+- Las playlists M3U locales se importan con `npm run import:channels` o `npm run import:all-channels`.
+
+## Session 14: Channel Reports
+
+La actividad agrega un flujo de reportes para que una persona autenticada pueda enviar un problema de un canal y, de forma opcional, una evidencia de imagen. La arquitectura mantiene Route, Middleware, Controller, Model y View.
+
+Los siguientes TODOs corresponden a la actividad base. El primero debe completarse para levantar el servidor sin error; los demás se resuelven para completar el flujo de Reports.
+
+| TODO | Archivo a modificar | Requerido para levantar el servidor sin error |
+| --- | --- | --- |
+| TODO v4.5 1 | `src/routes/report.routes.ts` | Sí |
+| TODO v4.5 2 | `src/controllers/report.controller.ts` | No |
+| TODO v4.5 3 | `src/controllers/report.controller.ts` | No |
+| TODO v4.5 4 | `src/public/js/reports.js` | No |
+| TODO v4.5 5 | `src/public/js/reports.js` | No |
+| TODO v4.5 6 | `src/controllers/report.controller.ts` | No |
+
+## Requirements
+
+- Node.js 20 o superior
+- Docker y Docker Compose
+
+## Installation and environment
+
+```bash
+npm install
+docker compose up -d
+npm run build
+npm run import:all-channels
+npm run dev
+```
+
+La aplicación queda disponible en `http://localhost:3000`.
+
+## Cargar canales desde las playlists
+
+Para cargar todos los canales de los archivos con sufijo `_playlist.m3u` dentro de `docs/`, ejecute:
+
+```bash
+docker compose up -d
+npm run build
+npm run import:all-channels
+```
+
+El script encuentra las playlists locales, elimina los documentos existentes de `channels` y `favorites`, e inserta los canales importados. Conserva las colecciones de usuarios y sesiones.
+
+Para importar o actualizar solamente una playlist, indique el archivo y el país:
+
+```bash
+npm run import:channels -- docs/japon_playlist.m3u Japan
+```
+
+La importación individual usa país más `tvgId` o, si falta, país más `streamUrl`, por lo que se puede ejecutar otra vez sin crear duplicados.
+
+La práctica deja intencionalmente incompletos los TODOs de Watch. Antes de resolverlos, la compilación y las pruebas que cargan Express pueden fallar; esto es parte del ejercicio.
+
+Un clon nuevo usa `.env.example` automáticamente en desarrollo, por lo que no requiere crear un `.env` para empezar la clase. Si se necesita personalizar la configuración local, crear el archivo ignorado por Git:
+
+```bash
+cp .env.example .env
+```
+
+Las variables requeridas están documentadas en `.env.example`: `PORT`, `NODE_ENV`, `MONGO_URI`, secretos JWT y los TTL de ambos tokens. En producción se debe proporcionar un `.env` seguro o variables de entorno equivalentes; los secretos de ejemplo no son válidos para producción.
+
+## Commands
+
+```bash
+npm run dev
+npm run build
+npm start
+npm test
+npm run test:watch
+npm run import:channels -- docs/argentina_playlist.m3u Argentina
+npm run import:all-channels
+docker compose config
+docker compose up -d
+```
+
+## Architecture
+
+El flujo usa Route, Controller, Mongoose Model y MongoDB. Para canales intervienen `channel.routes.ts`, `channel.controller.ts`, `channel.model.ts`, MongoDB, JSON y `src/public/js/home.js`. Las rutas aplican middleware cuando hace falta; los controladores validan y coordinan; los modelos definen persistencia. El frontend es HTML, CSS y JavaScript vanilla con `fetch` nativo.
+
+Para favoritos intervienen `home.js`, `favorite.routes.ts`, `authenticate`, `favorite.controller.ts`, `favorite.model.ts` y MongoDB. Un índice único en `userId` y `channelId` evita que un usuario guarde el mismo canal dos veces.
+
+## API
+
+| Method | Endpoint               | Description                    |
+| ------ | ---------------------- | ------------------------------ |
+| GET    | `/health`              | Express health check           |
+| GET    | `/ready`               | MongoDB readiness check        |
+| POST   | `/api/auth/register`   | Creates a USER and signs in    |
+| POST   | `/api/auth/login`      | Signs in and creates a session |
+| POST   | `/api/auth/refresh`    | Rotates refresh token          |
+| POST   | `/api/auth/logout`     | Revokes current session        |
+| POST   | `/api/auth/logout-all` | Revokes all user sessions      |
+| GET    | `/api/users/me`        | Current authenticated user     |
+| GET    | `/api/admin/demo`      | ADMIN-only demonstration       |
+| GET    | `/api/channels`        | Active channels from MongoDB   |
+| GET    | `/api/channels/:id`    | One active channel for Watch   |
+| GET    | `/api/favorites`       | Current user's favorite channels |
+| POST   | `/api/favorites/:channelId` | Adds an active channel to the current user's favorites |
+| DELETE | `/api/favorites/:channelId` | Removes a channel from the current user's favorites |
+| GET | `/api/reports` | Current user's reports, newest first |
+| POST | `/api/reports` | Creates a report with optional image evidence |
+
+Las rutas de favoritos están completas en esta versión de referencia. Consulte `docs/session-12-student-checkpoints.md` para la secuencia didáctica de la funcionalidad.
+
+Access and refresh tokens are sent as HttpOnly cookies. MongoDB only stores a SHA-256 hash of the refresh token (bcrypt is used for passwords; it truncates long JWT values). Refreshing replaces that hash, so the previous refresh token cannot be reused.
+
+## Importación M3U local
+
+Los archivos M3U se procesan únicamente en backend; el navegador nunca los lee:
+
+```bash
+npm run build
+npm run import:channels -- docs/argentina_playlist.m3u Argentina
+npm run import:all-channels
+```
+
+El importador individual lee metadatos de la playlist y actualiza por país más tvg-id o stream URL. La importación completa limpia Channels y Favorites antes de cargar todas las playlists de docs. La reproducción depende de que el stream remoto permita CORS y acceso directo desde navegador.
+</file>
+
+</files>

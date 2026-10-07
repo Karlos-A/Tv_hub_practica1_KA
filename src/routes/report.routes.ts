@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createReport, listReports } from '../controllers/report.controller.js';
+import { createReport, deleteReport, listReports, updateReport } from '../controllers/report.controller.js';
 import { authenticate } from '../middleware/authenticate.middleware.js';
 import { upload } from '../middleware/upload.js';
 
@@ -13,6 +13,16 @@ reportRouter.get('/', authenticate, listReports);
 reportRouter.post(
   '/',
   authenticate,
-  upload.________('evidence'),
+  upload.single('evidence'),
   createReport
 );
+reportRouter.post(
+  '/',
+  authenticate,
+  upload.array('evidence', 5),
+  createReport
+);
+
+reportRouter.patch('/:id', authenticate, updateReport);
+
+reportRouter.delete('/:id', authenticate, deleteReport);
