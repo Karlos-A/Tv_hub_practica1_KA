@@ -63,7 +63,7 @@ async function loadChannel() {
   // Completa las propiedades del Channel utilizadas por la View.
   // Objetivo: mostrar la información recibida desde el backend.
   // Resultado esperado: Watch debe mostrar nombre, país y categorías del canal seleccionado.
-  document.querySelector('#channel-name').textContent = channel.channelName;
+  document.querySelector('#channel-name').textContent = channel.name;
   document.querySelector('#channel-country').textContent = channel.country;
   document.querySelector('#channel-categories').textContent = channel.categories.join(', ') || 'Live TV';
   await loadFavoriteState(); await playChannel();
